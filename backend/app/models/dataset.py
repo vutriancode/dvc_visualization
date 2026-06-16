@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Literal
 
 
 class DvcFileMeta(BaseModel):
@@ -34,6 +34,11 @@ class Dataset(BaseModel):
     version_count: int = 0
     project_id: str = ""
     project_name: str = ""
+    gitlab_url: str = ""
+    repo_path: str = ""  # namespace/project of the actual git repo
+    source_type: Literal["dvc", "ssh", "rclone"] = "dvc"
+    rclone_remote: str = ""    # rclone remote name, set when source_type=="rclone"
+    provider: str = ""         # rclone provider type for icons
 
 
 class DatasetDetail(Dataset):

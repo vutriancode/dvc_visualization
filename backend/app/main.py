@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
-from app.routers import datasets_router, config_router, projects_router
+from app.routers import datasets_router, config_router, projects_router, storage_router, rclone_router
 
 app = FastAPI(
     title="DVC Data Management Dashboard",
@@ -20,6 +20,8 @@ app.add_middleware(
 app.include_router(config_router)
 app.include_router(projects_router)
 app.include_router(datasets_router)
+app.include_router(storage_router)
+app.include_router(rclone_router)
 
 
 @app.get("/api/health")

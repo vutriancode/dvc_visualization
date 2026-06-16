@@ -1,17 +1,44 @@
 services:
+  rclone:
+    image: rclone/rclone:latest
+    command: rcd --rc-no-auth --rc-addr=:5572
+    volumes:
+      - ./data:/data
+    environment:
+      - RCLONE_CONFIG=/data/rclone.conf
+    healthcheck:
+      test: ["CMD", "rclone", "rc", "rc/noop"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
   backend:
     build: ./backend
     ports:
-      - "8083:8000"
+      - "8084:8000"
+      - "53682:53682"   # rclone OAuth callback server
     env_file:
       - path: ./backend/.env
         required: false
+    environment:
+      - RCLONE_RC_URL=http://rclone:5572
+    volumes:
+      - ./data:/app/data
+    cap_add:
+      - NET_ADMIN       # needed for iptables DNAT
+    sysctls:
+      net.ipv4.conf.all.route_localnet: 1
+    depends_on:
+      rclone:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:
     build: ./frontend
     ports:
-      - "3001:80"
+      - "3004:80"
     depends_on:
       - backend
     restart: unless-stopped

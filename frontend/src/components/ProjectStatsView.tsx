@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router-dom";
-import { Database, GitCommit, HardDrive, User, Clock, RefreshCw, GitBranch, BarChart2, FileStack } from "lucide-react";
-import type { ProjectStats, DatasetStat } from "../types";
+import { Database, GitCommit, HardDrive, User, Clock, RefreshCw, GitBranch, BarChart2, FileStack, Trophy } from "lucide-react";
+import type { ProjectStats, DatasetStat, AuthorStat } from "../types";
 import { formatBytes, formatDate } from "../utils";
 
 
@@ -28,6 +28,105 @@ function SummaryCard({ label, value, sub, icon, color }: {
         <p className="text-xl font-bold text-gray-900">{value}</p>
         {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
       </div>
+    </div>
+  );
+}
+
+const RANK_STYLES = [
+  { bg: "bg-yellow-50", border: "border-yellow-300", badge: "bg-yellow-400 text-white", label: "1st" },
+  { bg: "bg-gray-50",   border: "border-gray-300",   badge: "bg-gray-400 text-white",   label: "2nd" },
+  { bg: "bg-orange-50", border: "border-orange-300", badge: "bg-orange-400 text-white", label: "3rd" },
+];
+
+function TopContributors({ authors }: { authors: AuthorStat[] }) {
+  if (authors.length === 0) return null;
+  const top = authors.slice(0, 3);
+  const maxCommits = top[0]?.commits ?? 1;
+  const maxBytes = Math.max(...top.map(a => a.total_data_bytes), 1);
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+      <div className="flex items-center gap-2 px-5 py-4 border-b border-gray-100">
+        <Trophy size={15} className="text-yellow-500" />
+        <h2 className="text-sm font-semibold text-gray-700">Top Contributors</h2>
+        <span className="text-xs text-gray-400 ml-1">by commits · last 50 commits/dataset</span>
+      </div>
+
+      {/* Top 3 podium cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-5">
+        {top.map((author, i) => {
+          const s = RANK_STYLES[i];
+          const commitPct = maxCommits > 0 ? (author.commits / maxCommits) * 100 : 0;
+          const bytesPct  = maxBytes  > 0 ? (author.total_data_bytes / maxBytes) * 100 : 0;
+          return (
+            <div key={author.author} className={`rounded-xl border ${s.border} ${s.bg} p-4 space-y-3`}>
+              <div className="flex items-center gap-2">
+                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${s.badge}`}>{s.label}</span>
+                <span className="font-semibold text-gray-900 text-sm truncate">{author.author}</span>
+              </div>
+
+              <div className="space-y-2">
+                <div>
+                  <div className="flex justify-between text-xs text-gray-500 mb-1">
+                    <span className="flex items-center gap-1"><GitCommit size={11} /> Commits</span>
+                    <span className="font-semibold text-gray-800">{author.commits}</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-1.5">
+                    <div className="h-1.5 rounded-full bg-blue-500 transition-all" style={{ width: `${commitPct}%` }} />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex justify-between text-xs text-gray-500 mb-1">
+                    <span className="flex items-center gap-1"><HardDrive size={11} /> Data (owned)</span>
+                    <span className="font-semibold text-gray-800">{author.total_data_bytes > 0 ? formatBytes(author.total_data_bytes) : "—"}</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-1.5">
+                    <div className="h-1.5 rounded-full bg-green-500 transition-all" style={{ width: `${bytesPct}%` }} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1 text-xs text-gray-500">
+                <Database size={11} />
+                <span>{author.datasets_touched} dataset{author.datasets_touched !== 1 ? "s" : ""}</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Full leaderboard table if more than 3 authors */}
+      {authors.length > 3 && (
+        <div className="border-t border-gray-100 overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-100">
+                <th className="text-left text-xs font-medium text-gray-500 px-5 py-2">#</th>
+                <th className="text-left text-xs font-medium text-gray-500 px-4 py-2">Author</th>
+                <th className="text-right text-xs font-medium text-gray-500 px-4 py-2">Commits</th>
+                <th className="text-right text-xs font-medium text-gray-500 px-4 py-2">Datasets</th>
+                <th className="text-right text-xs font-medium text-gray-500 px-4 py-2">Data Owned</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {authors.slice(3).map((a, i) => (
+                <tr key={a.author} className="hover:bg-gray-50 transition-colors">
+                  <td className="px-5 py-2.5 text-xs text-gray-400">{i + 4}</td>
+                  <td className="px-4 py-2.5 text-sm font-medium text-gray-700 flex items-center gap-1.5">
+                    <User size={12} className="text-gray-400" />{a.author}
+                  </td>
+                  <td className="px-4 py-2.5 text-right text-sm text-gray-700">{a.commits}</td>
+                  <td className="px-4 py-2.5 text-right text-sm text-gray-500">{a.datasets_touched}</td>
+                  <td className="px-4 py-2.5 text-right text-sm text-gray-500">
+                    {a.total_data_bytes > 0 ? formatBytes(a.total_data_bytes) : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -175,6 +274,9 @@ export function ProjectStatsView({ stats, onRefresh, isRefreshing }: Props) {
 
         </div>
       )}
+
+      {/* Top Contributors */}
+      <TopContributors authors={stats.author_stats ?? []} />
 
       {/* Detailed table */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">

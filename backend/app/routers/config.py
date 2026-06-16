@@ -1,10 +1,15 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
 from app.services.config_service import config_service
 from app.services.gitlab_service import gitlab_service
 from app.services.minio_service import minio_service
+from app.services.ssh_service import ssh_service
+from app.services.gdrive_service import gdrive_service
 from app.models.config import (
     GitLabProjectPublic, GitLabProjectCreate, GitLabProjectUpdate,
     MinIOConfigPublic, MinIOConfigUpdate,
+    SSHConfigPublic, SSHConfigUpdate,
+    GDriveConfigPublic, GDriveConfigUpdate,
 )
 
 router = APIRouter(prefix="/api/config", tags=["config"])
@@ -35,6 +40,44 @@ def update_project(project_id: str, payload: GitLabProjectUpdate):
 def delete_project(project_id: str):
     if not config_service.delete_project(project_id):
         raise HTTPException(status_code=404, detail="Project not found")
+
+
+@router.get("/projects/{project_id}/repos")
+async def list_group_repos(project_id: str):
+    """List all sub-projects in a group (even those with no datasets)."""
+    project = config_service.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        sub_projects = await gitlab_service.list_group_projects(project)
+        return [
+            {
+                "path": gp["path_with_namespace"],
+                "name": gp.get("name_with_namespace", gp.get("name", "")),
+            }
+            for gp in sub_projects
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/projects/{project_id}/branches")
+async def list_project_branches(project_id: str, repo_path: str = Query(default="")):
+    project = config_service.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        if repo_path and project.source_type == "group":
+            from app.models.config import GitLabProject as GP
+            target = GP(
+                id=project.id, name="", gitlab_url=project.gitlab_url,
+                gitlab_token=project.gitlab_token, project_path=repo_path, source_type="project",
+            )
+        else:
+            target = project
+        return await gitlab_service.list_branches(target)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @router.post("/projects/{project_id}/test")
@@ -71,5 +114,101 @@ def test_minio():
         raise HTTPException(status_code=400, detail="MinIO config is incomplete")
     try:
         return minio_service.test_connection(cfg)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# --- SSH ---
+
+@router.get("/ssh", response_model=SSHConfigPublic)
+def get_ssh():
+    return config_service.ssh_to_public(config_service.get_ssh())
+
+
+@router.put("/ssh", response_model=SSHConfigPublic)
+def update_ssh(payload: SSHConfigUpdate):
+    try:
+        cfg = config_service.update_ssh(payload)
+        return config_service.ssh_to_public(cfg)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ssh/test")
+def test_ssh():
+    cfg = config_service.get_ssh()
+    if not cfg.host or not cfg.username:
+        raise HTTPException(status_code=400, detail="SSH host and username are required")
+    try:
+        return ssh_service.test_connection(cfg)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# --- Google Drive ---
+
+@router.get("/gdrive", response_model=GDriveConfigPublic)
+def get_gdrive():
+    return config_service.gdrive_to_public(config_service.get_gdrive())
+
+
+@router.put("/gdrive", response_model=GDriveConfigPublic)
+def update_gdrive(payload: GDriveConfigUpdate):
+    try:
+        cfg = config_service.update_gdrive(payload)
+        return config_service.gdrive_to_public(cfg)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class GDriveAuthUrlRequest(BaseModel):
+    redirect_uri: str
+
+
+@router.post("/gdrive/auth-url")
+def gdrive_auth_url(payload: GDriveAuthUrlRequest):
+    cfg = config_service.get_gdrive()
+    if not cfg.client_id or not cfg.client_secret:
+        raise HTTPException(status_code=400, detail="Save Client ID and Client Secret first")
+    try:
+        url = gdrive_service.get_auth_url(cfg.client_id, cfg.client_secret, payload.redirect_uri)
+        return {"url": url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class GDriveExchangeRequest(BaseModel):
+    code: str
+    redirect_uri: str
+
+
+@router.post("/gdrive/exchange-code", response_model=GDriveConfigPublic)
+def gdrive_exchange_code(payload: GDriveExchangeRequest):
+    cfg = config_service.get_gdrive()
+    if not cfg.client_id or not cfg.client_secret:
+        raise HTTPException(status_code=400, detail="Client ID and Client Secret not configured")
+    try:
+        refresh_token = gdrive_service.exchange_code(
+            cfg.client_id, cfg.client_secret, payload.code, payload.redirect_uri
+        )
+        updated = config_service.set_gdrive_refresh_token(refresh_token)
+        return config_service.gdrive_to_public(updated)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.post("/gdrive/disconnect", response_model=GDriveConfigPublic)
+def gdrive_disconnect():
+    cfg = config_service.disconnect_gdrive()
+    return config_service.gdrive_to_public(cfg)
+
+
+@router.post("/gdrive/test")
+def test_gdrive():
+    cfg = config_service.get_gdrive()
+    if not cfg.refresh_token:
+        raise HTTPException(status_code=400, detail="Not connected to Google Drive")
+    try:
+        return gdrive_service.test_connection(cfg)
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))

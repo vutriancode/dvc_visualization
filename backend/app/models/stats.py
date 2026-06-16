@@ -15,6 +15,13 @@ class DatasetStat(BaseModel):
     md5: Optional[str] = None
 
 
+class AuthorStat(BaseModel):
+    author: str
+    commits: int
+    datasets_touched: int
+    total_data_bytes: int
+
+
 class ProjectStats(BaseModel):
     project_id: str
     project_name: str
@@ -25,3 +32,4 @@ class ProjectStats(BaseModel):
     total_versions: int
     total_files: int
     datasets: list[DatasetStat]
+    author_stats: list[AuthorStat] = []
