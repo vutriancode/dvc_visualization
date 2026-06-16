@@ -1,3 +1,5 @@
+from urllib.parse import urlparse
+
 from minio import Minio
 from minio.error import S3Error
 from app.models.dataset import MinioObject
@@ -13,15 +15,35 @@ _DVC_PATH_PATTERNS = [
 ]
 
 
+def _clean_endpoint(endpoint: str) -> tuple[str, bool | None]:
+    """Normalise a MinIO endpoint to the plain host[:port] form the SDK expects.
+
+    Returns (clean_endpoint, use_ssl_override).
+    use_ssl_override is set when the scheme is unambiguous (http → False, https → True),
+    or None when no scheme was present (caller keeps the stored use_ssl flag).
+    """
+    stripped = endpoint.strip()
+    if "://" in stripped:
+        parsed = urlparse(stripped)
+        host = parsed.netloc.rstrip("/") or parsed.path.rstrip("/")
+        ssl = parsed.scheme.lower() == "https"
+        return host, ssl
+    # No scheme — strip any accidental trailing path/slash
+    host = stripped.rstrip("/").split("/")[0]
+    return host, None
+
+
 class MinioService:
     def _client(self) -> tuple[Minio, str]:
         from app.services.config_service import config_service
         cfg = config_service.get_minio()
+        endpoint, ssl_override = _clean_endpoint(cfg.endpoint)
+        use_ssl = ssl_override if ssl_override is not None else cfg.use_ssl
         client = Minio(
-            cfg.endpoint,
+            endpoint,
             access_key=cfg.access_key,
             secret_key=cfg.secret_key,
-            secure=cfg.use_ssl,
+            secure=use_ssl,
         )
         return client, cfg.bucket
 
@@ -186,13 +208,41 @@ class MinioService:
         client, bucket, path_prefix = self._client_from_dvc_remote(dvc_remote)
         return self._generate_presigned_urls(client, bucket, md5, display_name, total_size, path_prefix)
 
+    def upload_dvc_object(self, md5: str, data: bytes) -> str:
+        """Upload raw bytes to MinIO at the DVC 2.x path (files/md5/<aa>/<rest>).
+        Creates the bucket if it does not exist. Returns the object name."""
+        import io as _io
+        client, bucket = self._client()
+        if not client.bucket_exists(bucket):
+            client.make_bucket(bucket)
+        object_name = f"files/md5/{md5[:2]}/{md5[2:]}"
+        client.put_object(bucket, object_name, _io.BytesIO(data), length=len(data))
+        return object_name
+
+    def upload_dvc_stream(self, md5: str, stream, size: int) -> str:
+        """Upload a file-like stream to MinIO at the DVC 2.x path.
+        Uses multipart upload when size > 64 MiB so memory usage stays flat.
+        Returns the object name."""
+        client, bucket = self._client()
+        if not client.bucket_exists(bucket):
+            client.make_bucket(bucket)
+        object_name = f"files/md5/{md5[:2]}/{md5[2:]}"
+        part_size = 64 * 1024 * 1024  # 64 MiB parts
+        client.put_object(
+            bucket, object_name, stream, length=size,
+            part_size=part_size,
+        )
+        return object_name
+
     def test_connection(self, cfg: MinIOConfig) -> dict:
         try:
+            endpoint, ssl_override = _clean_endpoint(cfg.endpoint)
+            use_ssl = ssl_override if ssl_override is not None else cfg.use_ssl
             client = Minio(
-                cfg.endpoint,
+                endpoint,
                 access_key=cfg.access_key,
                 secret_key=cfg.secret_key,
-                secure=cfg.use_ssl,
+                secure=use_ssl,
             )
             exists = client.bucket_exists(cfg.bucket)
             return {"ok": True, "bucket": cfg.bucket, "bucket_exists": exists}

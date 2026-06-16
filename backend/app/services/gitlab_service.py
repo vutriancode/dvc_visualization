@@ -461,4 +461,140 @@ class GitLabService:
         return None
 
 
+    async def list_accessible_projects(self, gitlab_url: str, token: str, search: str = "") -> list[dict]:
+        """List projects accessible with this token (for repo picker)."""
+        import re as _re
+        headers = {"PRIVATE-TOKEN": token}
+        params: dict = {"per_page": 50, "order_by": "last_activity_at", "membership": True, "min_access_level": 30}
+        if search:
+            params["search"] = search
+        async with httpx.AsyncClient(timeout=15) as client:
+            try:
+                resp = await client.get(f"{gitlab_url}/api/v4/projects", headers=headers, params=params)
+                resp.raise_for_status()
+                return [
+                    {"id": p["id"], "name": p["name_with_namespace"], "path": p["path_with_namespace"]}
+                    for p in resp.json()
+                ]
+            except Exception as e:
+                raise RuntimeError(str(e))
+
+    async def check_can_create_project(self, gitlab_url: str, token: str) -> dict:
+        """Return GitLab user info relevant to project creation."""
+        headers = {"PRIVATE-TOKEN": token}
+        async with httpx.AsyncClient(timeout=10) as client:
+            try:
+                resp = await client.get(f"{gitlab_url}/api/v4/user", headers=headers)
+                resp.raise_for_status()
+                u = resp.json()
+                return {
+                    "username": u.get("username", ""),
+                    "can_create_project": u.get("can_create_project", True),
+                    "projects_limit": u.get("projects_limit", -1),
+                }
+            except Exception:
+                return {"can_create_project": True}  # optimistic — let the actual call fail
+
+    async def create_project(
+        self, gitlab_url: str, token: str, name: str, namespace_path: str = ""
+    ) -> dict:
+        """Create a new GitLab project initialized with a README. Returns project info."""
+        import re as _re
+        headers = {"PRIVATE-TOKEN": token}
+
+        # Pre-flight: check if the user is allowed to create projects at all
+        user_info = await self.check_can_create_project(gitlab_url, token)
+        if not user_info.get("can_create_project", True):
+            raise RuntimeError(
+                f"Tài khoản GitLab '{user_info.get('username', '')}' bị giới hạn tạo project "
+                f"(can_create_project = false). Hãy nhờ GitLab admin mở quyền, "
+                f"hoặc tạo repo thủ công trên GitLab rồi chọn 'Nhập đường dẫn repo'."
+            )
+
+        path_slug = _re.sub(r"[^a-zA-Z0-9_.-]", "-", name).strip("-") or "dataset-repo"
+        payload: dict = {
+            "name": name,
+            "path": path_slug,
+            "initialize_with_readme": True,
+            "default_branch": "main",
+        }
+        if namespace_path:
+            async with httpx.AsyncClient(timeout=10) as client:
+                ns_resp = await client.get(
+                    f"{gitlab_url}/api/v4/namespaces",
+                    headers=headers,
+                    params={"search": namespace_path},
+                )
+                ns_resp.raise_for_status()
+                ns_list = ns_resp.json()
+                ns = next(
+                    (n for n in ns_list if n.get("full_path") == namespace_path or n.get("path") == namespace_path),
+                    None,
+                )
+                if ns:
+                    payload["namespace_id"] = ns["id"]
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(f"{gitlab_url}/api/v4/projects", headers=headers, json=payload)
+            if resp.status_code == 403:
+                # Extract GitLab's own error message from the response body
+                detail = ""
+                try:
+                    body = resp.json()
+                    detail = body.get("message", "") or str(body)
+                except Exception:
+                    detail = resp.text[:300]
+                raise RuntimeError(
+                    f"GitLab từ chối tạo project (403): {detail}\n"
+                    "Nguyên nhân thường gặp:\n"
+                    "• Admin giới hạn số project hoặc tắt tạo project cho user thường\n"
+                    "• Namespace không tồn tại hoặc bạn không phải Maintainer/Owner của group đó\n"
+                    "→ Giải pháp: Tạo repo thủ công trên GitLab, sau đó chọn 'Nhập đường dẫn repo'."
+                )
+            resp.raise_for_status()
+            p = resp.json()
+            return {
+                "id": p["id"],
+                "path_with_namespace": p["path_with_namespace"],
+                "default_branch": p.get("default_branch", "main"),
+                "http_url_to_repo": p.get("http_url_to_repo", ""),
+            }
+
+    async def get_file_content(self, project: GitLabProject, path: str, ref: str = "HEAD") -> str | None:
+        """Fetch raw file content. Returns None if file does not exist."""
+        encoded = quote(path, safe="")
+        async with httpx.AsyncClient(timeout=10) as client:
+            try:
+                resp = await client.get(
+                    self._api(project, f"/repository/files/{encoded}/raw"),
+                    headers=self._headers(project),
+                    params={"ref": ref},
+                )
+                if resp.status_code == 404:
+                    return None
+                resp.raise_for_status()
+                return resp.text
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 404:
+                    return None
+                raise
+
+    async def commit_files(
+        self,
+        project: GitLabProject,
+        branch: str,
+        message: str,
+        actions: list[dict],
+    ) -> dict:
+        """Commit one or more file actions (create/update) to a GitLab repo."""
+        payload = {"branch": branch, "commit_message": message, "actions": actions}
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                self._api(project, "/repository/commits"),
+                headers=self._headers(project),
+                json=payload,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+
 gitlab_service = GitLabService()

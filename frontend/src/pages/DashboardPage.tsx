@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Database, HardDrive, Search, RefreshCw, GitBranch,
   Settings, AlertTriangle, Layers, BarChart2, FolderOpen,
   ChevronDown, ChevronRight, Loader2, Clock, FileStack, User,
-  Terminal, Cloud, ServerCrash,
+  Terminal, Cloud, ServerCrash, PlusCircle,
 } from "lucide-react";
 import { useDatasets, useStats, useBranches, useRepoBranchDatasets, useGroupRepos } from "../hooks/useDatasets";
 import { useProjects } from "../hooks/useConfig";
+import { CreateDVCDatasetModal } from "../components/CreateDVCDatasetModal";
 import { useDatasetDownloads } from "../hooks/useDatasetDownloads";
 import { useProjectStats } from "../hooks/useProjectStats";
 import { StatCard } from "../components/StatCard";
@@ -209,7 +211,7 @@ function DVCProjectSubGroup({ title, datasets, branch }: { title: string; datase
   );
 }
 
-function DVCGroup({ datasets, branch }: { datasets: Dataset[]; branch?: string }) {
+function DVCGroup({ datasets, branch, onCreateClick }: { datasets: Dataset[]; branch?: string; onCreateClick?: () => void }) {
   const [open, setOpen] = useState(true);
 
   const projectMap = new Map<string, Dataset[]>();
@@ -222,19 +224,44 @@ function DVCGroup({ datasets, branch }: { datasets: Dataset[]; branch?: string }
 
   return (
     <div className="bg-white rounded-xl border border-blue-200 overflow-hidden">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center gap-2 px-4 py-3 bg-blue-50 border-b border-blue-200 hover:brightness-95 transition-all"
-      >
-        <GitBranch size={14} className="text-blue-500 flex-shrink-0" />
-        <span className="font-semibold text-sm text-gray-800 flex-1 text-left">DVC</span>
-        <span className="text-xs text-gray-400 bg-white/70 px-2 py-0.5 rounded-full flex-shrink-0">{datasets.length}</span>
-        <ChevronDown size={14} className={`text-gray-400 flex-shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />
-      </button>
+      <div className="flex items-center gap-2 px-4 py-3 bg-blue-50 border-b border-blue-200">
+        <button
+          onClick={() => setOpen((o) => !o)}
+          className="flex items-center gap-2 flex-1 min-w-0 hover:brightness-95 transition-all"
+        >
+          <GitBranch size={14} className="text-blue-500 flex-shrink-0" />
+          <span className="font-semibold text-sm text-gray-800 flex-1 text-left">DVC</span>
+          <span className="text-xs text-gray-400 bg-white/70 px-2 py-0.5 rounded-full flex-shrink-0">
+            {datasets.length}
+          </span>
+          <ChevronDown size={14} className={`text-gray-400 flex-shrink-0 transition-transform ${open ? "" : "-rotate-90"}`} />
+        </button>
+        {onCreateClick && (
+          <button
+            onClick={onCreateClick}
+            className="flex items-center gap-1 text-xs text-blue-600 hover:bg-blue-100 px-2 py-1 rounded-lg transition-colors font-medium flex-shrink-0 ml-1"
+            title="Tạo dataset DVC mới"
+          >
+            <PlusCircle size={13} /> Tạo mới
+          </button>
+        )}
+      </div>
 
       {open && (
         <div>
-          {isMultiProject
+          {datasets.length === 0 ? (
+            <div className="text-center py-8">
+              <p className="text-xs text-gray-400 mb-3">Chưa có dataset DVC nào</p>
+              {onCreateClick && (
+                <button
+                  onClick={onCreateClick}
+                  className="flex items-center gap-1.5 text-xs text-blue-600 hover:bg-blue-50 px-3 py-1.5 rounded-lg transition-colors font-medium mx-auto border border-blue-200"
+                >
+                  <PlusCircle size={13} /> Tạo dataset đầu tiên
+                </button>
+              )}
+            </div>
+          ) : isMultiProject
             ? Array.from(projectMap.entries()).map(([projectName, pds]) => (
                 <DVCProjectSubGroup key={projectName} title={projectName} datasets={pds} branch={branch} />
               ))
@@ -317,6 +344,13 @@ export function DashboardPage() {
   const [selectedProject, setSelectedProject] = useState("all");
   const [selectedBranch, setSelectedBranch] = useState("");
   const [viewMode, setViewMode] = useState<ViewMode>("datasets");
+  const [showCreateDataset, setShowCreateDataset] = useState(false);
+
+  const queryClient = useQueryClient();
+  const handleDatasetCreated = () => {
+    queryClient.invalidateQueries({ queryKey: ["datasets"] });
+    queryClient.invalidateQueries({ queryKey: ["stats"] });
+  };
 
   const { data: projects } = useProjects();
   const { data: stats, isLoading: statsLoading } = useStats();
@@ -374,6 +408,13 @@ export function DashboardPage() {
             >
               <RefreshCw size={15} className={isFetching || isStatsRefetching ? "animate-spin" : ""} />
               Refresh
+            </button>
+            <button
+              onClick={() => setShowCreateDataset(true)}
+              className="flex items-center gap-1.5 text-sm bg-blue-600 text-white hover:bg-blue-700 transition-colors px-3 py-1.5 rounded-lg font-medium"
+            >
+              <PlusCircle size={15} />
+              Tạo dataset
             </button>
             <button
               onClick={() => navigate("/settings")}
@@ -617,9 +658,13 @@ export function DashboardPage() {
                     />
                   )}
 
-                  {/* All DVC datasets — DVC → project → dataset */}
-                  {dvcDatasets.length > 0 && (
-                    <DVCGroup datasets={dvcDatasets} branch={selectedBranch || undefined} />
+                  {/* DVC datasets — DVC → project → dataset */}
+                  {(dvcDatasets.length > 0 || (projects && projects.length > 0)) && (
+                    <DVCGroup
+                      datasets={dvcDatasets}
+                      branch={selectedBranch || undefined}
+                      onCreateClick={() => setShowCreateDataset(true)}
+                    />
                   )}
                 </div>
               );
@@ -627,6 +672,13 @@ export function DashboardPage() {
           </>
         )}
       </main>
+
+      {showCreateDataset && (
+        <CreateDVCDatasetModal
+          onClose={() => setShowCreateDataset(false)}
+          onCreated={handleDatasetCreated}
+        />
+      )}
     </div>
   );
 }

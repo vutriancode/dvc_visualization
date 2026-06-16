@@ -80,6 +80,18 @@ async def list_project_branches(project_id: str, repo_path: str = Query(default=
         raise HTTPException(status_code=502, detail=str(e))
 
 
+@router.get("/projects/{project_id}/accessible-repos")
+async def list_accessible_repos(project_id: str, search: str = Query(default="")):
+    """List GitLab repos accessible with this project's token (for dataset creation picker)."""
+    project = config_service.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        return await gitlab_service.list_accessible_projects(project.gitlab_url, project.gitlab_token, search)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 @router.post("/projects/{project_id}/test")
 async def test_project(project_id: str):
     project = config_service.get_project(project_id)
