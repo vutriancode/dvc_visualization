@@ -1,10 +1,15 @@
 import { useState, useRef } from "react";
 import {
   X, Database, Upload, CheckCircle, Loader2, FolderOpen,
-  PlusCircle, AlertCircle, GitBranch,
+  PlusCircle, AlertCircle, GitBranch, Folder,
 } from "lucide-react";
 import { useProjects } from "../hooks/useConfig";
 import { formatBytes } from "../utils";
+
+interface FileEntry {
+  file: File;
+  relativePath: string; // path inside the dataset, e.g. "images/cat.jpg"
+}
 
 interface Props {
   onClose: () => void;
@@ -36,21 +41,39 @@ export function CreateDVCDatasetModal({ onClose, onCreated }: Props) {
   const [datasetName, setDatasetName] = useState("");
   const [branch, setBranch] = useState("main");
   const [commitMessage, setCommitMessage] = useState("");
-  const [files, setFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<FileEntry[]>([]);
   const [dragging, setDragging] = useState(false);
   const [step, setStep] = useState<Step>("idle");
   const [result, setResult] = useState<CreateResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
 
   const selectedProject = projects?.find((p) => p.id === projectId);
 
   const addFiles = (list: FileList | null) => {
     if (!list) return;
-    const incoming = Array.from(list);
+    const incoming: FileEntry[] = Array.from(list).map((f) => ({
+      file: f,
+      relativePath: f.name,
+    }));
     setFiles((prev) => {
-      const existingNames = new Set(prev.map((f) => f.name));
-      return [...prev, ...incoming.filter((f) => !existingNames.has(f.name))];
+      const existing = new Set(prev.map((e) => e.relativePath));
+      return [...prev, ...incoming.filter((e) => !existing.has(e.relativePath))];
+    });
+  };
+
+  const addFolder = (list: FileList | null) => {
+    if (!list) return;
+    const incoming: FileEntry[] = Array.from(list).map((f) => {
+      // webkitRelativePath = "rootFolder/subdir/file.txt" → strip root folder name
+      const parts = f.webkitRelativePath ? f.webkitRelativePath.split("/") : [f.name];
+      const relativePath = parts.length > 1 ? parts.slice(1).join("/") : f.name;
+      return { file: f, relativePath };
+    });
+    setFiles((prev) => {
+      const existing = new Set(prev.map((e) => e.relativePath));
+      return [...prev, ...incoming.filter((e) => !existing.has(e.relativePath))];
     });
   };
 
@@ -85,8 +108,8 @@ export function CreateDVCDatasetModal({ onClose, onCreated }: Props) {
     form.append("namespace_path", namespacePath.trim());
     form.append("branch", branch || "main");
     form.append("commit_message", commitMessage.trim());
-    for (const f of files) {
-      form.append("files", f, f.name);
+    for (const entry of files) {
+      form.append("files", entry.file, entry.relativePath);
     }
 
     try {
@@ -325,11 +348,23 @@ export function CreateDVCDatasetModal({ onClose, onCreated }: Props) {
                 />
               </div>
 
-              {/* File drop zone */}
+              {/* File / folder upload */}
               <div>
-                <label className="text-xs font-medium text-gray-700 mb-1.5 block">
-                  Files <span className="text-red-400">*</span>
-                </label>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-xs font-medium text-gray-700">
+                    Files <span className="text-red-400">*</span>
+                  </label>
+                  {files.length > 0 && (
+                    <button
+                      onClick={() => setFiles([])}
+                      className="text-xs text-gray-400 hover:text-red-400 transition-colors"
+                    >
+                      Xóa tất cả
+                    </button>
+                  )}
+                </div>
+
+                {/* Drop zone */}
                 <div
                   onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
                   onDragLeave={() => setDragging(false)}
@@ -338,48 +373,63 @@ export function CreateDVCDatasetModal({ onClose, onCreated }: Props) {
                     setDragging(false);
                     addFiles(e.dataTransfer.files);
                   }}
-                  onClick={() => fileInputRef.current?.click()}
-                  className={`border-2 border-dashed rounded-xl px-4 py-6 text-center cursor-pointer select-none transition-colors ${
-                    dragging
-                      ? "border-blue-400 bg-blue-50"
-                      : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                  className={`border-2 border-dashed rounded-xl px-4 py-5 text-center select-none transition-colors ${
+                    dragging ? "border-blue-400 bg-blue-50" : "border-gray-200 hover:border-gray-300"
                   }`}
                 >
-                  <Upload size={22} className={`mx-auto mb-2 ${dragging ? "text-blue-400" : "text-gray-300"}`} />
-                  <p className="text-sm text-gray-500">
-                    Kéo thả files vào đây hoặc{" "}
-                    <span className="text-blue-600 hover:underline">click để chọn</span>
-                  </p>
-                  <p className="text-xs text-gray-400 mt-0.5">Hỗ trợ nhiều files</p>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => addFiles(e.target.files)}
-                  />
+                  <div className="flex items-center justify-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-700 transition-colors"
+                    >
+                      <Upload size={12} /> Chọn files
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => folderInputRef.current?.click()}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-white border border-gray-200 rounded-lg hover:bg-gray-50 text-gray-700 transition-colors"
+                    >
+                      <Folder size={12} /> Chọn folder
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-400 mt-2">hoặc kéo thả files vào đây</p>
+                  <input ref={fileInputRef} type="file" multiple className="hidden"
+                    onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
+                  <input ref={folderInputRef} type="file" className="hidden"
+                    /* @ts-expect-error webkitdirectory is non-standard */
+                    webkitdirectory=""
+                    onChange={(e) => { addFolder(e.target.files); e.target.value = ""; }} />
                 </div>
 
+                {/* File list */}
                 {files.length > 0 && (
-                  <div className="mt-2 max-h-40 overflow-y-auto divide-y divide-gray-50 border border-gray-100 rounded-lg">
-                    {files.map((f, i) => (
-                      <div
-                        key={i}
-                        className="flex items-center gap-2 px-3 py-2 bg-white hover:bg-gray-50 text-xs"
-                      >
-                        <FolderOpen size={12} className="text-gray-300 flex-shrink-0" />
-                        <span className="flex-1 truncate text-gray-700">{f.name}</span>
-                        <span className="text-gray-400 flex-shrink-0 tabular-nums">
-                          {formatBytes(f.size)}
-                        </span>
-                        <button
-                          onClick={(e) => { e.stopPropagation(); removeFile(i); }}
-                          className="text-gray-300 hover:text-red-400 flex-shrink-0 transition-colors"
-                        >
-                          <X size={11} />
-                        </button>
-                      </div>
-                    ))}
+                  <div className="mt-2 border border-gray-100 rounded-lg overflow-hidden">
+                    <div className="px-3 py-1.5 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
+                      <span className="text-xs text-gray-500">
+                        {files.length} file · {formatBytes(files.reduce((s, e) => s + e.file.size, 0))}
+                      </span>
+                    </div>
+                    <div className="max-h-40 overflow-y-auto divide-y divide-gray-50">
+                      {files.slice(0, 50).map((entry, i) => (
+                        <div key={i} className="flex items-center gap-2 px-3 py-1.5 bg-white hover:bg-gray-50 text-xs">
+                          <FolderOpen size={11} className="text-gray-300 flex-shrink-0" />
+                          <span className="flex-1 truncate text-gray-700 font-mono">{entry.relativePath}</span>
+                          <span className="text-gray-400 flex-shrink-0 tabular-nums">{formatBytes(entry.file.size)}</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); removeFile(i); }}
+                            className="text-gray-300 hover:text-red-400 flex-shrink-0 transition-colors"
+                          >
+                            <X size={11} />
+                          </button>
+                        </div>
+                      ))}
+                      {files.length > 50 && (
+                        <div className="px-3 py-1.5 text-xs text-gray-400 italic bg-gray-50">
+                          ... và {files.length - 50} file khác
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -391,7 +441,7 @@ export function CreateDVCDatasetModal({ onClose, onCreated }: Props) {
                   <div>
                     <p className="text-sm font-medium text-blue-700">Đang tạo dataset…</p>
                     <p className="text-xs text-blue-500 mt-0.5">
-                      Upload {files.length} file lên MinIO và commit .dvc file lên GitLab
+                      Upload {files.length} file ({formatBytes(files.reduce((s, e) => s + e.file.size, 0))}) lên MinIO và commit .dvc metadata lên GitLab
                     </p>
                   </div>
                 </div>
