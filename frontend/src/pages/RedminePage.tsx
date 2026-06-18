@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import {
   useRedmineProjects, useRedmineIssues, useRedmineIssue,
-  useRedmineMeta, useRedmineMembers,
+  useRedmineMeta, useRedmineMembers, useAllRedmineMembers,
   useCreateIssue, useUpdateIssue, useDeleteIssue,
   useRedmineStatusMapping,
 } from "../hooks/useRedmine";
@@ -576,8 +576,12 @@ export function RedminePage() {
 
   const { data: projects, isLoading: loadingProjects, error: projectsError } = useRedmineProjects();
   const { data: meta } = useRedmineMeta();
-  const { data: members = [] } = useRedmineMembers(selectedProjectId || null);
   const { data: statusMapping = {} } = useRedmineStatusMapping();
+
+  // Members: project cụ thể hoặc tất cả (endpoint /members/all)
+  const { data: singleProjectMembers = [] } = useRedmineMembers(selectedProjectId || null);
+  const { data: allMembers = [] } = useAllRedmineMembers(!selectedProjectId);
+  const members = selectedProjectId ? singleProjectMembers : allMembers;
 
   // Xác định category của 1 issue dựa vào status mapping
   const getIssueCategory = (issue: { status: { id: number; is_closed: boolean } }) => {
@@ -606,11 +610,6 @@ export function RedminePage() {
   });
 
   const totalCount = issues.length;
-
-  // Auto-select first project
-  if (!selectedProjectId && projects && projects.length > 0) {
-    setSelectedProjectId(String(projects[0].identifier || projects[0].id));
-  }
 
   // Not configured state
   if (projectsError) {

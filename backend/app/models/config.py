@@ -151,7 +151,23 @@ class RedmineStatusMapping(BaseModel):
     mapping: dict[str, str] = {}  # {"1": "todo", "2": "in_progress", "3": "done", ...}
 
 
+class ManagedProject(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    description: str = ""
+    status: Literal["active", "planning", "completed", "paused"] = "active"
+    start_date: str = ""
+    end_date: str = ""
+    tags: list[str] = []
+    color: str = "#3b82f6"
+    gitlab_config_id: str = ""        # GitLabProject.id (from config)
+    ssh_dataset_ids: list[str] = []   # SSHDataset.id list
+    rclone_dataset_ids: list[str] = [] # RcloneDataset.id list
+    redmine_project_id: str = ""      # Redmine project identifier
+
+
 class AppConfig(BaseModel):
+    managed_projects: list[ManagedProject] = []
     projects: list[GitLabProject] = []
     minio: MinIOConfig = Field(default_factory=MinIOConfig)
     ssh: SSHConfig = Field(default_factory=SSHConfig)

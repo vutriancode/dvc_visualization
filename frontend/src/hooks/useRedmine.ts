@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type {
   RedmineConfigPublic, RedmineConfigUpdate,
   RedmineProject, RedmineIssue, RedmineMeta, RedmineRef,
-  RedmineStatsResponse,
+  RedmineStatsResponse, RedmineHoursResponse,
 } from "../types";
 
 const api = async <T>(url: string, opts?: RequestInit): Promise<T> => {
@@ -63,6 +63,15 @@ export function useRedmineMembers(projectId: string | null) {
     queryKey: ["redmine-members", projectId],
     queryFn: () => api(`/api/redmine/projects/${projectId}/members`),
     enabled: !!projectId,
+  });
+}
+
+export function useAllRedmineMembers(enabled = true) {
+  return useQuery<RedmineRef[]>({
+    queryKey: ["redmine-members-all"],
+    queryFn: () => api("/api/redmine/members/all"),
+    enabled,
+    staleTime: 2 * 60 * 1000,
   });
 }
 
@@ -173,6 +182,30 @@ export function useRedmineMeta() {
     queryKey: ["redmine-meta"],
     queryFn: () => api("/api/redmine/meta"),
     staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+}
+
+// ── Working hours ────────────────────────────────────────────────────────────
+
+export interface HoursFilters {
+  project_id?: string;
+  member_ids: number[];
+  from_date?: string;
+  to_date?: string;
+}
+
+export function useRedmineHours(filters: HoursFilters) {
+  const params = new URLSearchParams();
+  if (filters.project_id) params.set("project_id", filters.project_id);
+  params.set("member_ids", filters.member_ids.join(","));
+  if (filters.from_date) params.set("from_date", filters.from_date);
+  if (filters.to_date) params.set("to_date", filters.to_date);
+
+  return useQuery<RedmineHoursResponse>({
+    queryKey: ["redmine-hours", filters],
+    queryFn: () => api(`/api/redmine/hours?${params}`),
+    enabled: filters.member_ids.length > 0,
     retry: false,
   });
 }

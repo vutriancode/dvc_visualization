@@ -417,6 +417,13 @@ export function DashboardPage() {
               Tạo dataset
             </button>
             <button
+              onClick={() => navigate("/projects")}
+              className="flex items-center gap-2 text-sm text-gray-600 hover:text-blue-600 transition-colors"
+            >
+              <FolderOpen size={15} />
+              Dự án
+            </button>
+            <button
               onClick={() => navigate("/redmine")}
               className="flex items-center gap-2 text-sm text-gray-600 hover:text-red-600 transition-colors"
             >

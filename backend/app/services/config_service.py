@@ -8,6 +8,7 @@ from app.models.config import (
     RcloneDataset,
     RedmineConfig, RedmineConfigUpdate, RedmineConfigPublic,
     RedmineStatusMapping,
+    ManagedProject,
 )
 
 CONFIG_FILE = Path("/app/data/config.json")
@@ -253,6 +254,42 @@ class ConfigService:
         cfg.redmine_status_mapping = RedmineStatusMapping(mapping=mapping)
         self._save(cfg)
         return cfg.redmine_status_mapping
+
+
+    # --- Managed Projects ---
+
+    def list_managed_projects(self) -> list[ManagedProject]:
+        return self.load().managed_projects
+
+    def get_managed_project(self, project_id: str) -> ManagedProject | None:
+        return next((p for p in self.load().managed_projects if p.id == project_id), None)
+
+    def create_managed_project(self, data: dict) -> ManagedProject:
+        cfg = self.load()
+        p = ManagedProject(**{k: v for k, v in data.items() if v is not None})
+        cfg.managed_projects.append(p)
+        self._save(cfg)
+        return p
+
+    def update_managed_project(self, project_id: str, data: dict) -> ManagedProject | None:
+        cfg = self.load()
+        for i, p in enumerate(cfg.managed_projects):
+            if p.id == project_id:
+                current = p.model_dump()
+                current.update({k: v for k, v in data.items() if v is not None})
+                cfg.managed_projects[i] = ManagedProject(**current)
+                self._save(cfg)
+                return cfg.managed_projects[i]
+        return None
+
+    def delete_managed_project(self, project_id: str) -> bool:
+        cfg = self.load()
+        before = len(cfg.managed_projects)
+        cfg.managed_projects = [p for p in cfg.managed_projects if p.id != project_id]
+        if len(cfg.managed_projects) < before:
+            self._save(cfg)
+            return True
+        return False
 
 
 config_service = ConfigService()

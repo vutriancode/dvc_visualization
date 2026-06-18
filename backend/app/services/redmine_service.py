@@ -170,6 +170,29 @@ class RedmineService:
             if "user" in m
         ]
 
+    # ── Time Entries ──────────────────────────────────────────────────────────
+
+    async def list_time_entries(
+        self,
+        project_id: str | None = None,
+        user_id: int | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[dict], int]:
+        params: dict = {"limit": limit, "offset": offset}
+        if project_id:
+            params["project_id"] = project_id
+        if user_id:
+            params["user_id"] = user_id
+        if from_date:
+            params["from"] = from_date
+        if to_date:
+            params["to"] = to_date
+        data = await self._request("time_entries.json", params=params)
+        return data.get("time_entries", []), data.get("total_count", 0)
+
     async def get_current_user(self) -> dict:
         data = await self._request("users/current.json")
         return data.get("user", {})

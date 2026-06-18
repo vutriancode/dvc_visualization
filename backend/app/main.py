@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from app.config import settings
-from app.routers import datasets_router, config_router, projects_router, storage_router, rclone_router, redmine_router
+from app.routers import datasets_router, config_router, projects_router, storage_router, rclone_router, redmine_router, managed_projects_router
 
 app = FastAPI(
     title="DVC Data Management Dashboard",
@@ -32,6 +32,7 @@ app.include_router(datasets_router)
 app.include_router(storage_router)
 app.include_router(rclone_router)
 app.include_router(redmine_router)
+app.include_router(managed_projects_router)
 
 
 @app.get("/api/health")

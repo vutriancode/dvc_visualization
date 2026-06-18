@@ -1,10 +1,11 @@
 import { useState } from "react";
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer,
+  LineChart, Line, BarChart, Bar,
+  XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, Cell,
 } from "recharts";
-import { Users, TrendingDown, AlertTriangle, CheckCircle, Loader2, ChevronDown, ChevronUp, Tag } from "lucide-react";
-import { useRedmineStats, useRedmineMeta } from "../hooks/useRedmine";
+import { Users, TrendingDown, AlertTriangle, CheckCircle, Loader2, ChevronDown, ChevronUp, Tag, Clock } from "lucide-react";
+import { useRedmineStats, useRedmineMeta, useRedmineHours } from "../hooks/useRedmine";
 import type { RedmineRef, RedmineMemberStat } from "../types";
 
 // Màu cho từng thành viên trên chart
@@ -235,6 +236,193 @@ function StatRow({ stat, color }: { stat: RedmineMemberStat; color: string }) {
   );
 }
 
+// ── Working hours view ───────────────────────────────────────────────────────
+
+function HoursView({
+  data,
+  isLoading,
+  error,
+  selectedMemberIds,
+}: {
+  data: import("../types").RedmineHoursResponse | undefined;
+  isLoading: boolean;
+  error: Error | null;
+  selectedMemberIds: number[];
+}) {
+  const [mode, setMode] = useState<"actual" | "estimated">("actual");
+
+  const getVal = (entry: { actual: number; estimated: number }) =>
+    mode === "actual" ? entry.actual : entry.estimated;
+
+  const getTotal = (m: import("../types").RedmineMemberHours) =>
+    mode === "actual" ? m.total_actual : m.total_estimated;
+
+  const memberColorMap: Record<number, string> = {};
+  selectedMemberIds.forEach((id, i) => { memberColorMap[id] = MEMBER_COLORS[i % MEMBER_COLORS.length]; });
+
+  if (isLoading) return <div className="flex items-center justify-center py-12"><Loader2 size={20} className="animate-spin text-gray-300" /></div>;
+  if (error) return <div className="text-xs text-red-500 py-4 text-center">{error.message}</div>;
+  if (!data) return null;
+
+  const chartData = data.months.map((month) => {
+    const row: Record<string, string | number> = { month };
+    data.members.forEach((m) => {
+      const entry = m.monthly.find((e) => e.month === month);
+      row[m.name] = entry ? getVal(entry) : 0;
+    });
+    return row;
+  });
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Toggle */}
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5">
+          <button
+            onClick={() => setMode("actual")}
+            className={`px-3 py-1.5 text-xs rounded-md font-medium transition-colors ${mode === "actual" ? "bg-white shadow-sm text-gray-800" : "text-gray-500"}`}
+          >
+            Thực tế
+          </button>
+          <button
+            onClick={() => setMode("estimated")}
+            className={`px-3 py-1.5 text-xs rounded-md font-medium transition-colors ${mode === "estimated" ? "bg-white shadow-sm text-gray-800" : "text-gray-500"}`}
+          >
+            Ước tính
+          </button>
+        </div>
+        <span className="text-xs text-gray-400">
+          {mode === "actual" ? "Giờ đã log qua time entries" : "Giờ ước tính từ estimated_hours của issue"}
+        </span>
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${Math.min(data.members.length, 4)}, minmax(0,1fr))` }}>
+        {data.members.map((m, i) => {
+          const color = memberColorMap[m.id] ?? MEMBER_COLORS[i % MEMBER_COLORS.length];
+          const actual = m.total_actual;
+          const estimated = m.total_estimated;
+          return (
+            <div key={m.id} className="bg-white rounded-xl border border-gray-100 px-4 py-3">
+              <div className="flex items-center gap-2 mb-2">
+                <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
+                <p className="text-xs text-gray-500 truncate">{m.name}</p>
+              </div>
+              <div className="flex items-end gap-3">
+                <div>
+                  <p className="text-xs text-gray-400 mb-0.5">Thực tế</p>
+                  <p className="text-lg font-bold tabular-nums" style={{ color }}>{actual}h</p>
+                </div>
+                <div className="pb-0.5">
+                  <p className="text-xs text-gray-400 mb-0.5">Ước tính</p>
+                  <p className="text-base font-semibold text-gray-400 tabular-nums">{estimated}h</p>
+                </div>
+                {estimated > 0 && (
+                  <div className="pb-0.5 ml-auto">
+                    <p className="text-xs text-gray-400 mb-0.5">Đạt</p>
+                    <p className={`text-sm font-semibold tabular-nums ${actual >= estimated ? "text-green-600" : "text-orange-500"}`}>
+                      {Math.round((actual / estimated) * 100)}%
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Monthly table */}
+      <div className="bg-white rounded-xl border border-gray-100 overflow-x-auto">
+        <table className="w-full text-left text-xs">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50/60">
+              <th className="px-4 py-2.5 font-medium text-gray-400 uppercase tracking-wide">Tháng</th>
+              {data.members.map((m, i) => (
+                <th key={m.id} className="px-4 py-2.5 font-medium text-center" style={{ color: memberColorMap[m.id] ?? MEMBER_COLORS[i % MEMBER_COLORS.length] }}>
+                  {m.name}
+                </th>
+              ))}
+              <th className="px-4 py-2.5 font-medium text-gray-400 uppercase tracking-wide text-center">Tổng</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-50">
+            {data.months.map((month) => {
+              const rowTotal = data.members.reduce((sum, m) => {
+                const entry = m.monthly.find((e) => e.month === month);
+                return sum + (entry ? getVal(entry) : 0);
+              }, 0);
+              return (
+                <tr key={month} className="hover:bg-gray-50/50 transition-colors">
+                  <td className="px-4 py-2.5 font-medium text-gray-700">
+                    {new Date(month + "-01").toLocaleDateString("vi-VN", { month: "long", year: "numeric" })}
+                  </td>
+                  {data.members.map((m) => {
+                    const entry = m.monthly.find((e) => e.month === month);
+                    const h = entry ? getVal(entry) : 0;
+                    return (
+                      <td key={m.id} className="px-4 py-2.5 text-center tabular-nums">
+                        {h > 0 ? <span className="font-medium text-gray-800">{h}h</span> : <span className="text-gray-300">—</span>}
+                      </td>
+                    );
+                  })}
+                  <td className="px-4 py-2.5 text-center tabular-nums font-semibold text-gray-700">
+                    {rowTotal > 0 ? `${Math.round(rowTotal * 100) / 100}h` : <span className="text-gray-300">—</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-gray-100 bg-gray-50/60 font-semibold">
+              <td className="px-4 py-2.5 text-gray-600 text-xs uppercase tracking-wide">Tổng</td>
+              {data.members.map((m, i) => (
+                <td key={m.id} className="px-4 py-2.5 text-center tabular-nums" style={{ color: memberColorMap[m.id] ?? MEMBER_COLORS[i % MEMBER_COLORS.length] }}>
+                  {getTotal(m)}h
+                </td>
+              ))}
+              <td className="px-4 py-2.5 text-center tabular-nums text-gray-800">
+                {Math.round(data.members.reduce((s, m) => s + getTotal(m), 0) * 100) / 100}h
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      {/* Bar chart */}
+      {data.months.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-100 p-4">
+          <p className="text-sm font-semibold text-gray-800 mb-4">
+            Biểu đồ giờ {mode === "actual" ? "thực tế" : "ước tính"} theo tháng
+          </p>
+          <ResponsiveContainer width="100%" height={260}>
+            <BarChart data={chartData} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <XAxis
+                dataKey="month"
+                tickFormatter={(v) => new Date(v + "-01").toLocaleDateString("vi-VN", { month: "short", year: "2-digit" })}
+                tick={{ fontSize: 11, fill: "#9ca3af" }}
+              />
+              <YAxis tick={{ fontSize: 11, fill: "#9ca3af" }} unit="h" />
+              <Tooltip
+                formatter={(value, name) => [`${value}h`, String(name)]}
+                contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid #e5e7eb" }}
+              />
+              {data.members.map((m, i) => {
+                const color = memberColorMap[m.id] ?? MEMBER_COLORS[i % MEMBER_COLORS.length];
+                return (
+                  <Bar key={m.id} dataKey={m.name} fill={color} radius={[3, 3, 0, 0]} maxBarSize={40}>
+                    {data.months.map((_, mi) => <Cell key={mi} fill={color} fillOpacity={0.85} />)}
+                  </Bar>
+                );
+              })}
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main component ───────────────────────────────────────────────────────────
 
 export function RedmineStats({
@@ -250,7 +438,7 @@ export function RedmineStats({
   const defaultFrom = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
   const [fromDate, setFromDate] = useState(defaultFrom);
   const [toDate, setToDate] = useState(today);
-  const [view, setView] = useState<"table" | "burndown">("table");
+  const [view, setView] = useState<"table" | "burndown" | "hours">("table");
   const [trackerIds, setTrackerIds] = useState<number[]>([]);
 
   const { data: meta } = useRedmineMeta();
@@ -259,6 +447,13 @@ export function RedmineStats({
     project_id: projectId,
     member_ids: selectedMemberIds,
     tracker_ids: trackerIds,
+    from_date: fromDate,
+    to_date: toDate,
+  });
+
+  const { data: hoursData, isLoading: hoursLoading, error: hoursError } = useRedmineHours({
+    project_id: projectId,
+    member_ids: selectedMemberIds,
     from_date: fromDate,
     to_date: toDate,
   });
@@ -312,6 +507,12 @@ export function RedmineStats({
           >
             <TrendingDown size={11} /> Burndown
           </button>
+          <button
+            onClick={() => setView("hours")}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md font-medium transition-colors ${view === "hours" ? "bg-white shadow-sm text-gray-800" : "text-gray-500"}`}
+          >
+            <Clock size={11} /> Giờ làm
+          </button>
         </div>
         <TrackerSelector
           trackers={meta?.trackers ?? []}
@@ -363,7 +564,7 @@ export function RedmineStats({
             </div>
           )}
         </div>
-      ) : (
+      ) : view === "burndown" ? (
         /* ── Burndown chart ── */
         <div className="bg-white rounded-xl border border-gray-100 p-4">
           <div className="flex items-center justify-between mb-4">
@@ -434,6 +635,14 @@ export function RedmineStats({
             </LineChart>
           </ResponsiveContainer>
         </div>
+      ) : (
+        /* ── Working hours view ── */
+        <HoursView
+          data={hoursData}
+          isLoading={hoursLoading}
+          error={hoursError}
+          selectedMemberIds={selectedMemberIds}
+        />
       )}
     </div>
   );

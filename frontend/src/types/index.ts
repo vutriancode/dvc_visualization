@@ -293,3 +293,40 @@ export interface RedmineStatsResponse {
   to_date: string;
   days: string[];
 }
+
+export interface RedmineMemberHours {
+  id: number;
+  name: string;
+  total_actual: number;
+  total_estimated: number;
+  monthly: { month: string; actual: number; estimated: number }[];
+}
+
+export interface RedmineHoursResponse {
+  members: RedmineMemberHours[];
+  months: string[];
+  from_date: string;
+  to_date: string;
+}
+
+export interface ManagedProject {
+  id: string;
+  name: string;
+  description: string;
+  status: "active" | "planning" | "completed" | "paused";
+  start_date: string;
+  end_date: string;
+  tags: string[];
+  color: string;
+  gitlab_config_id: string;
+  ssh_dataset_ids: string[];
+  rclone_dataset_ids: string[];
+  redmine_project_id: string;
+}
+
+export interface ManagedProjectSummary {
+  dataset_count: number;
+  open_task_count: number;
+  total_task_count: number;
+  member_count: number;
+}
