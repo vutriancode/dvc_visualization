@@ -6,6 +6,8 @@ from app.models.config import (
     SSHConfig, SSHConfigUpdate, SSHConfigPublic, SSHDataset,
     GDriveConfig, GDriveConfigUpdate, GDriveConfigPublic,
     RcloneDataset,
+    RedmineConfig, RedmineConfigUpdate, RedmineConfigPublic,
+    RedmineStatusMapping,
 )
 
 CONFIG_FILE = Path("/app/data/config.json")
@@ -217,6 +219,40 @@ class ConfigService:
             client_secret_set=bool(g.client_secret),
             connected=bool(g.refresh_token),
         )
+
+    # --- Redmine ---
+
+    def get_redmine(self) -> RedmineConfig:
+        return self.load().redmine
+
+    def update_redmine(self, data: RedmineConfigUpdate) -> RedmineConfig:
+        cfg = self.load()
+        current = cfg.redmine.model_dump()
+        updates = data.model_dump(exclude_none=True)
+        if "api_key" in updates and updates["api_key"] == "":
+            del updates["api_key"]
+        current.update(updates)
+        cfg.redmine = RedmineConfig(**current)
+        self._save(cfg)
+        return cfg.redmine
+
+    def redmine_to_public(self, r: RedmineConfig) -> RedmineConfigPublic:
+        return RedmineConfigPublic(
+            url=r.url,
+            api_key_set=bool(r.api_key),
+            verify_ssl=r.verify_ssl,
+        )
+
+    # --- Redmine status mapping ---
+
+    def get_redmine_status_mapping(self) -> RedmineStatusMapping:
+        return self.load().redmine_status_mapping
+
+    def save_redmine_status_mapping(self, mapping: dict[str, str]) -> RedmineStatusMapping:
+        cfg = self.load()
+        cfg.redmine_status_mapping = RedmineStatusMapping(mapping=mapping)
+        self._save(cfg)
+        return cfg.redmine_status_mapping
 
 
 config_service = ConfigService()

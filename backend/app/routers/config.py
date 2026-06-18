@@ -5,11 +5,13 @@ from app.services.gitlab_service import gitlab_service
 from app.services.minio_service import minio_service
 from app.services.ssh_service import ssh_service
 from app.services.gdrive_service import gdrive_service
+from app.services.redmine_service import redmine_service
 from app.models.config import (
     GitLabProjectPublic, GitLabProjectCreate, GitLabProjectUpdate,
     MinIOConfigPublic, MinIOConfigUpdate,
     SSHConfigPublic, SSHConfigUpdate,
     GDriveConfigPublic, GDriveConfigUpdate,
+    RedmineConfigPublic, RedmineConfigUpdate,
 )
 
 router = APIRouter(prefix="/api/config", tags=["config"])
@@ -224,3 +226,50 @@ def test_gdrive():
         return gdrive_service.test_connection(cfg)
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+
+# --- Redmine ---
+
+@router.get("/redmine", response_model=RedmineConfigPublic)
+def get_redmine():
+    cfg = config_service.get_redmine()
+    return config_service.redmine_to_public(cfg)
+
+
+@router.put("/redmine", response_model=RedmineConfigPublic)
+def update_redmine(payload: RedmineConfigUpdate):
+    try:
+        cfg = config_service.update_redmine(payload)
+        return config_service.redmine_to_public(cfg)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class RedmineTestRequest(BaseModel):
+    url: str
+    api_key: str
+
+
+@router.post("/redmine/test")
+async def test_redmine(payload: RedmineTestRequest):
+    try:
+        return await redmine_service.test_connection(payload.url, payload.api_key)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# --- Redmine status mapping ---
+
+@router.get("/redmine/status-mapping")
+def get_redmine_status_mapping():
+    return config_service.get_redmine_status_mapping().mapping
+
+
+class StatusMappingPayload(BaseModel):
+    mapping: dict[str, str]  # {status_id: "todo" | "in_progress" | "done"}
+
+
+@router.put("/redmine/status-mapping")
+def save_redmine_status_mapping(payload: StatusMappingPayload):
+    result = config_service.save_redmine_status_mapping(payload.mapping)
+    return result.mapping

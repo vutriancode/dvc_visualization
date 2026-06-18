@@ -212,3 +212,84 @@ export interface ProjectStats {
   datasets: DatasetStat[];
   author_stats: AuthorStat[];
 }
+
+// ── Redmine types ──────────────────────────────────────────────────────────
+
+export interface RedmineConfigPublic {
+  url: string;
+  api_key_set: boolean;
+  verify_ssl: boolean;
+}
+
+export interface RedmineConfigUpdate {
+  url?: string;
+  api_key?: string;
+  verify_ssl?: boolean;
+}
+
+export interface RedmineRef {
+  id: number;
+  name: string;
+}
+
+export interface RedmineProject {
+  id: number;
+  identifier: string;
+  name: string;
+  description?: string;
+  status: number;
+  trackers?: RedmineRef[];
+}
+
+export interface RedmineIssue {
+  id: number;
+  subject: string;
+  description?: string;
+  project: RedmineRef;
+  tracker: RedmineRef;
+  status: RedmineStatus;
+  priority: RedmineRef;
+  author: RedmineRef;
+  assigned_to?: RedmineRef;
+  parent?: { id: number };
+  done_ratio: number;
+  estimated_hours?: number;
+  due_date?: string;
+  created_on: string;
+  updated_on: string;
+  journals?: RedmineJournal[];
+}
+
+export interface RedmineJournal {
+  id: number;
+  user: RedmineRef;
+  notes: string;
+  created_on: string;
+}
+
+export interface RedmineStatus extends RedmineRef {
+  is_closed: boolean;
+}
+
+export interface RedmineMeta {
+  trackers: RedmineRef[];
+  statuses: RedmineStatus[];
+  priorities: RedmineRef[];
+}
+
+export interface RedmineMemberStat {
+  id: number;
+  name: string;
+  total: number;
+  remaining: number;  // tính từ is_closed của Redmine
+  status_counts: Record<string, number>;
+  overdue: number;
+  burndown: { date: string; total: number; remaining: number }[];
+}
+
+export interface RedmineStatsResponse {
+  members: RedmineMemberStat[];
+  from_date: string;
+  to_date: string;
+  days: string[];
+}

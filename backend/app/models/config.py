@@ -128,6 +128,29 @@ class RcloneDataset(BaseModel):
     provider: str  # "drive", "dropbox", etc. — for display/icons
 
 
+class RedmineConfig(BaseModel):
+    url: str = ""
+    api_key: str = ""
+    verify_ssl: bool = True
+
+
+class RedmineConfigPublic(BaseModel):
+    url: str
+    api_key_set: bool
+    verify_ssl: bool
+
+
+class RedmineConfigUpdate(BaseModel):
+    url: Optional[str] = None
+    api_key: Optional[str] = None   # empty string = keep existing
+    verify_ssl: Optional[bool] = None
+
+
+class RedmineStatusMapping(BaseModel):
+    """Maps Redmine status IDs (as strings) to one of: todo | in_progress | done."""
+    mapping: dict[str, str] = {}  # {"1": "todo", "2": "in_progress", "3": "done", ...}
+
+
 class AppConfig(BaseModel):
     projects: list[GitLabProject] = []
     minio: MinIOConfig = Field(default_factory=MinIOConfig)
@@ -135,3 +158,5 @@ class AppConfig(BaseModel):
     ssh_datasets: list[SSHDataset] = []
     gdrive: GDriveConfig = Field(default_factory=GDriveConfig)
     rclone_datasets: list[RcloneDataset] = []
+    redmine: RedmineConfig = Field(default_factory=RedmineConfig)
+    redmine_status_mapping: RedmineStatusMapping = Field(default_factory=RedmineStatusMapping)

@@ -417,6 +417,16 @@ export function DashboardPage() {
               Tạo dataset
             </button>
             <button
+              onClick={() => navigate("/redmine")}
+              className="flex items-center gap-2 text-sm text-gray-600 hover:text-red-600 transition-colors"
+            >
+              <svg className="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="currentColor">
+                <circle cx="12" cy="12" r="10" />
+                <path fill="white" strokeWidth="2" d="M8 12h8M12 8v8" />
+              </svg>
+              Redmine
+            </button>
+            <button
               onClick={() => navigate("/settings")}
               className="flex items-center gap-2 text-sm text-gray-600 hover:text-blue-600 transition-colors"
             >

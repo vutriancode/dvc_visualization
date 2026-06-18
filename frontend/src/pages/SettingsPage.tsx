@@ -5,6 +5,7 @@ import {
   CheckCircle, XCircle, Loader2, Save, Plus, Trash2, Pencil, X, Layers,
   Terminal, FolderOpen, Link, LogOut, Cloud,
 } from "lucide-react";
+import { useRedmineConfig, useUpdateRedmineConfig, useTestRedmineConfig } from "../hooks/useRedmine";
 import {
   useProjects, useAddProject, useUpdateProject, useDeleteProject, useTestProject,
   useMinioConfig, useUpdateMinio, useTestMinio,
@@ -1182,11 +1183,121 @@ function CloudStorageTab() {
   );
 }
 
+// ---- Redmine tab ----
+
+function RedmineTab() {
+  const { data: redmine, isLoading } = useRedmineConfig();
+  const updateRedmine = useUpdateRedmineConfig();
+  const testRedmine = useTestRedmineConfig();
+
+  const [form, setForm] = useState<{ url: string; api_key: string; verify_ssl: boolean }>({
+    url: "", api_key: "", verify_ssl: true,
+  });
+  const [initialized, setInitialized] = useState(false);
+
+  if (redmine && !initialized) {
+    setForm({ url: redmine.url, api_key: "", verify_ssl: redmine.verify_ssl });
+    setInitialized(true);
+  }
+
+  const handleSave = async () => {
+    const payload: Record<string, unknown> = { url: form.url, verify_ssl: form.verify_ssl };
+    if (form.api_key) payload.api_key = form.api_key;
+    await updateRedmine.mutateAsync(payload as Parameters<typeof updateRedmine.mutateAsync>[0]);
+  };
+
+  const handleTest = () => {
+    testRedmine.mutate({ url: form.url, api_key: form.api_key || "__use_saved__" });
+  };
+
+  const testStatus = testRedmine.isPending ? "loading" : testRedmine.isSuccess ? "ok" : testRedmine.isError ? "error" : "idle";
+
+  if (isLoading) return <div className="flex justify-center py-10"><Loader2 size={18} className="animate-spin text-gray-300" /></div>;
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm space-y-5">
+        <div className="flex items-center gap-3 pb-2 border-b border-gray-100">
+          <div className="p-2 bg-red-50 rounded-lg text-red-500">
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
+              <circle cx="12" cy="12" r="10" />
+              <path fill="white" d="M8 12h8M12 8v8" />
+            </svg>
+          </div>
+          <div>
+            <h2 className="font-semibold text-gray-900">Redmine</h2>
+            <p className="text-xs text-gray-400">Kết nối Redmine để quản lý issues ngay trên dashboard</p>
+          </div>
+          {redmine?.api_key_set && (
+            <span className="ml-auto flex items-center gap-1 text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
+              <CheckCircle size={11} /> Đã kết nối
+            </span>
+          )}
+        </div>
+
+        <Field
+          label="Redmine URL"
+          value={form.url}
+          onChange={(v) => setForm({ ...form, url: v })}
+          placeholder="http://localhost:3000 hoặc https://redmine.company.com"
+          hint="URL của Redmine server (không cần dấu / ở cuối)"
+        />
+        <SecretInput
+          label={redmine?.api_key_set ? "API Key (để trống để giữ nguyên)" : "API Key *"}
+          value={form.api_key}
+          onChange={(v) => setForm({ ...form, api_key: v })}
+          placeholder={redmine?.api_key_set ? "••••••••••••••••" : "Lấy từ My account → API access key"}
+          hint="Vào Redmine → My account → Show bên cạnh 'API access key'"
+        />
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="redmine-verify-ssl"
+            checked={form.verify_ssl}
+            onChange={(e) => setForm({ ...form, verify_ssl: e.target.checked })}
+            className="rounded"
+          />
+          <label htmlFor="redmine-verify-ssl" className="text-xs text-gray-600">
+            Verify SSL certificate
+          </label>
+        </div>
+
+        <div className="flex items-center gap-3 pt-1">
+          <button
+            onClick={handleSave}
+            disabled={updateRedmine.isPending || !form.url}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+          >
+            {updateRedmine.isPending ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+            Lưu
+          </button>
+          <button
+            onClick={handleTest}
+            disabled={testRedmine.isPending || !form.url}
+            className="flex items-center gap-2 px-4 py-2 border border-gray-200 text-sm text-gray-600 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+          >
+            Test kết nối
+          </button>
+          <ConnectionStatus
+            status={testStatus}
+            message={testRedmine.isSuccess
+              ? `${testRedmine.data?.name?.trim() || testRedmine.data?.user} (${testRedmine.data?.user})`
+              : testRedmine.error?.message}
+          />
+        </div>
+        {updateRedmine.isSuccess && (
+          <p className="text-xs text-green-600 flex items-center gap-1"><CheckCircle size={11} /> Đã lưu</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---- Main page ----
 
 export function SettingsPage() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<"projects" | "minio" | "ssh" | "gdrive" | "cloud">("projects");
+  const [tab, setTab] = useState<"projects" | "minio" | "ssh" | "gdrive" | "cloud" | "redmine">("projects");
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1235,6 +1346,16 @@ export function SettingsPage() {
           >
             <Cloud size={15} /> Cloud Storage
           </button>
+          <button
+            onClick={() => setTab("redmine")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === "redmine" ? "bg-red-500 text-white" : "text-gray-600 hover:bg-gray-50"}`}
+          >
+            <svg className="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="currentColor">
+              <circle cx="12" cy="12" r="10" />
+              <path fill="white" d="M8 12h8M12 8v8" />
+            </svg>
+            Redmine
+          </button>
         </div>
 
         {tab === "projects" && <ProjectsTab />}
@@ -1242,6 +1363,7 @@ export function SettingsPage() {
         {tab === "ssh" && <SSHTab />}
         {tab === "gdrive" && <GDriveTab />}
         {tab === "cloud" && <CloudStorageTab />}
+        {tab === "redmine" && <RedmineTab />}
       </main>
     </div>
   );
