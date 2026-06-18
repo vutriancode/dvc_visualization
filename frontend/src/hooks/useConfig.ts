@@ -10,6 +10,16 @@ import type {
 
 const api = axios.create({ baseURL: "/api" });
 
+// Inject the auth token into every request
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem("dashboard_token");
+  if (token) {
+    config.headers = config.headers ?? {};
+    config.headers["Authorization"] = `Bearer ${token}`;
+  }
+  return config;
+});
+
 // --- Projects ---
 
 export function useProjects() {

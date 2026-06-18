@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 from app.services.config_service import config_service
 from app.services.gitlab_service import gitlab_service
@@ -234,6 +234,20 @@ def test_gdrive():
 def get_redmine():
     cfg = config_service.get_redmine()
     return config_service.redmine_to_public(cfg)
+
+
+@router.get("/redmine/internal")
+def get_redmine_internal(request: Request):
+    """Full Redmine config including API key — for internal MCP services only.
+    Returns user's personal Redmine API key if set, else the global one.
+    Only accessible from within the Docker network (not exposed via nginx).
+    """
+    global_cfg = config_service.get_redmine()
+    user = getattr(request.state, "user", None)
+    api_key = global_cfg.api_key
+    if user and user.credentials.redmine_api_key:
+        api_key = user.credentials.redmine_api_key
+    return {"url": global_cfg.url, "api_key": api_key, "verify_ssl": global_cfg.verify_ssl}
 
 
 @router.put("/redmine", response_model=RedmineConfigPublic)

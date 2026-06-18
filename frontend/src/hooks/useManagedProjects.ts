@@ -2,7 +2,13 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { ManagedProject, ManagedProjectSummary } from "../types";
 
 const api = async <T>(url: string, opts?: RequestInit): Promise<T> => {
-  const resp = await fetch(url, opts);
+  const token = localStorage.getItem("dashboard_token");
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...(opts?.headers as Record<string, string> | undefined),
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const resp = await fetch(url, { ...opts, headers });
   if (!resp.ok) {
     let detail = resp.statusText;
     try { detail = (await resp.json()).detail ?? detail; } catch {}

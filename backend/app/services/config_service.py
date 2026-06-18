@@ -9,6 +9,7 @@ from app.models.config import (
     RedmineConfig, RedmineConfigUpdate, RedmineConfigPublic,
     RedmineStatusMapping,
     ManagedProject,
+    User, UserCredentials,
 )
 
 CONFIG_FILE = Path("/app/data/config.json")
@@ -290,6 +291,72 @@ class ConfigService:
             self._save(cfg)
             return True
         return False
+
+
+    # --- Users ---
+
+    def list_users(self) -> list[User]:
+        return self.load().users
+
+    def get_user(self, user_id: str) -> User | None:
+        return next((u for u in self.load().users if u.id == user_id), None)
+
+    def get_user_by_username(self, username: str) -> User | None:
+        return next((u for u in self.load().users if u.username == username), None)
+
+    def create_user(self, data: dict) -> User:
+        cfg = self.load()
+        user = User(
+            username=data["username"],
+            display_name=data.get("display_name", ""),
+            password_hash=data.get("password_hash", ""),
+            role=data.get("role", "member"),
+        )
+        cfg.users.append(user)
+        self._save(cfg)
+        return user
+
+    def update_user(self, user_id: str, data: dict) -> User | None:
+        cfg = self.load()
+        for i, u in enumerate(cfg.users):
+            if u.id == user_id:
+                current = u.model_dump()
+                # Only allow updating these fields
+                allowed = {"display_name", "password_hash", "role"}
+                for key in allowed:
+                    if key in data and data[key] is not None:
+                        current[key] = data[key]
+                cfg.users[i] = User(**current)
+                self._save(cfg)
+                return cfg.users[i]
+        return None
+
+    def delete_user(self, user_id: str) -> bool:
+        cfg = self.load()
+        before = len(cfg.users)
+        cfg.users = [u for u in cfg.users if u.id != user_id]
+        if len(cfg.users) < before:
+            self._save(cfg)
+            return True
+        return False
+
+    def update_user_credentials(
+        self, user_id: str, gitlab_token: str | None, redmine_api_key: str | None
+    ) -> User | None:
+        cfg = self.load()
+        for i, u in enumerate(cfg.users):
+            if u.id == user_id:
+                current = u.model_dump()
+                creds = current.get("credentials", {})
+                if gitlab_token is not None:
+                    creds["gitlab_token"] = gitlab_token
+                if redmine_api_key is not None:
+                    creds["redmine_api_key"] = redmine_api_key
+                current["credentials"] = creds
+                cfg.users[i] = User(**current)
+                self._save(cfg)
+                return cfg.users[i]
+        return None
 
 
 config_service = ConfigService()

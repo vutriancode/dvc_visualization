@@ -5,8 +5,9 @@ import {
   Database, HardDrive, Search, RefreshCw, GitBranch,
   Settings, AlertTriangle, Layers, BarChart2, FolderOpen,
   ChevronDown, ChevronRight, Loader2, Clock, FileStack, User,
-  Terminal, Cloud, ServerCrash, PlusCircle,
+  Terminal, Cloud, ServerCrash, PlusCircle, Users, LogOut,
 } from "lucide-react";
+import { useAuth } from "../hooks/useAuth";
 import { useDatasets, useStats, useBranches, useRepoBranchDatasets, useGroupRepos } from "../hooks/useDatasets";
 import { useProjects } from "../hooks/useConfig";
 import { CreateDVCDatasetModal } from "../components/CreateDVCDatasetModal";
@@ -340,6 +341,7 @@ function groupByRepo(datasets: Dataset[]): Map<string, { name: string; datasets:
 
 export function DashboardPage() {
   const navigate = useNavigate();
+  const { user, logout } = useAuth();
   const [search, setSearch] = useState("");
   const [selectedProject, setSelectedProject] = useState("all");
   const [selectedBranch, setSelectedBranch] = useState("");
@@ -439,6 +441,39 @@ export function DashboardPage() {
             >
               <Settings size={15} />
               Settings
+            </button>
+
+            {/* Divider */}
+            <div className="w-px h-5 bg-gray-200" />
+
+            {/* Profile */}
+            <button
+              onClick={() => navigate("/profile")}
+              className="flex items-center gap-2 text-sm text-gray-600 hover:text-blue-600 transition-colors"
+              title={user?.display_name || user?.username}
+            >
+              <User size={15} />
+              {user?.display_name || user?.username || "Profile"}
+            </button>
+
+            {/* Users (admin only) */}
+            {user?.role === "admin" && (
+              <button
+                onClick={() => navigate("/admin/users")}
+                className="flex items-center gap-2 text-sm text-gray-600 hover:text-purple-600 transition-colors"
+              >
+                <Users size={15} />
+                Users
+              </button>
+            )}
+
+            {/* Logout */}
+            <button
+              onClick={async () => { await logout(); navigate("/login"); }}
+              className="flex items-center gap-2 text-sm text-gray-500 hover:text-red-600 transition-colors"
+              title="Đăng xuất"
+            >
+              <LogOut size={15} />
             </button>
           </div>
         </div>

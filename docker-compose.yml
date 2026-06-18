@@ -42,3 +42,23 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+
+  dashboard-mcp:
+    build: ./dashboard-mcp
+    ports:
+      - "3005:8000"
+    environment:
+      - DASHBOARD_URL=http://backend:8000/api
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  redmine-mcp:
+    build: ./redmine-mcp/my-redmine-mcp
+    ports:
+      - "3006:8000"
+    environment:
+      - DASHBOARD_URL=http://backend:8000/api
+    depends_on:
+      - backend
+    restart: unless-stopped

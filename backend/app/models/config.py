@@ -3,6 +3,20 @@ from typing import Optional, Literal
 import uuid
 
 
+class UserCredentials(BaseModel):
+    gitlab_token: str = ""      # personal GitLab token (overrides global)
+    redmine_api_key: str = ""   # personal Redmine API key (overrides global)
+
+
+class User(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    username: str
+    display_name: str = ""
+    password_hash: str = ""
+    role: Literal["admin", "member"] = "member"
+    credentials: UserCredentials = Field(default_factory=UserCredentials)
+
+
 class GitLabProject(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
@@ -176,3 +190,4 @@ class AppConfig(BaseModel):
     rclone_datasets: list[RcloneDataset] = []
     redmine: RedmineConfig = Field(default_factory=RedmineConfig)
     redmine_status_mapping: RedmineStatusMapping = Field(default_factory=RedmineStatusMapping)
+    users: list[User] = []
