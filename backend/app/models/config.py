@@ -15,6 +15,8 @@ class User(BaseModel):
     password_hash: str = ""
     role: Literal["admin", "member"] = "member"
     credentials: UserCredentials = Field(default_factory=UserCredentials)
+    api_token_hash: str = ""    # SHA-256 of PAT — never returned to client
+    api_token_prefix: str = ""  # first 12 chars of PAT for display only
 
 
 class GitLabProject(BaseModel):

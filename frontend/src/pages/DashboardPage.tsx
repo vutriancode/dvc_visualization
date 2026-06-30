@@ -5,7 +5,7 @@ import {
   Database, HardDrive, Search, RefreshCw, GitBranch,
   Settings, AlertTriangle, Layers, BarChart2, FolderOpen,
   ChevronDown, ChevronRight, Loader2, Clock, FileStack, User,
-  Terminal, Cloud, ServerCrash, PlusCircle, Users, LogOut,
+  Terminal, Cloud, ServerCrash, PlusCircle, Users, LogOut, Bot,
 } from "lucide-react";
 import { useAuth } from "../hooks/useAuth";
 import { useDatasets, useStats, useBranches, useRepoBranchDatasets, useGroupRepos } from "../hooks/useDatasets";
@@ -441,6 +441,15 @@ export function DashboardPage() {
             >
               <Settings size={15} />
               Settings
+            </button>
+
+            <button
+              onClick={() => navigate("/mcp")}
+              className="flex items-center gap-2 text-sm text-gray-600 hover:text-blue-600 transition-colors"
+              title="Kết nối MCP với Claude Desktop"
+            >
+              <Bot size={15} />
+              MCP
             </button>
 
             {/* Divider */}

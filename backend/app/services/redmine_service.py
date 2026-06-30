@@ -49,6 +49,7 @@ class RedmineService:
 
     async def list_issues(
         self, project_id: str | None = None,
+        query_id: int | None = None,
         status_id: str = "open",
         tracker_id: int | None = None,
         priority_id: int | None = None,
@@ -58,10 +59,11 @@ class RedmineService:
     ) -> tuple[list[dict], int]:
         params: dict = {
             "limit": limit, "offset": offset, "status_id": status_id,
-            "include": "status",   # ensures is_closed flag is returned
         }
         if project_id:
             params["project_id"] = project_id
+        if query_id:
+            params["query_id"] = query_id
         if tracker_id:
             params["tracker_id"] = tracker_id
         if priority_id:
@@ -192,6 +194,59 @@ class RedmineService:
             params["to"] = to_date
         data = await self._request("time_entries.json", params=params)
         return data.get("time_entries", []), data.get("total_count", 0)
+
+    async def create_time_entry(
+        self,
+        issue_id: int,
+        hours: float,
+        spent_on: str,
+        activity_id: int | None = None,
+        comments: str = "",
+    ) -> dict:
+        entry: dict = {"issue_id": issue_id, "hours": hours, "spent_on": spent_on}
+        if activity_id:
+            entry["activity_id"] = activity_id
+        if comments:
+            entry["comments"] = comments
+        data = await self._request("time_entries.json", method="POST", data={"time_entry": entry})
+        return data.get("time_entry", {})
+
+    async def list_logged_issue_ids(
+        self,
+        project_id: str | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        user_ids: list[int] | None = None,
+    ) -> list[int]:
+        """Trả về danh sách issue_id đã có time entry trong khoảng thời gian."""
+        issue_ids: set[int] = set()
+
+        async def _fetch_user(uid: int | None) -> None:
+            offset = 0
+            while True:
+                entries, total = await self.list_time_entries(
+                    project_id=project_id, user_id=uid,
+                    from_date=from_date, to_date=to_date,
+                    limit=100, offset=offset,
+                )
+                for e in entries:
+                    if issue := e.get("issue"):
+                        issue_ids.add(issue["id"])
+                offset += len(entries)
+                if not entries or offset >= total:
+                    break
+
+        if user_ids:
+            import asyncio as _asyncio
+            await _asyncio.gather(*[_fetch_user(uid) for uid in user_ids])
+        else:
+            await _fetch_user(None)
+
+        return list(issue_ids)
+
+    async def list_time_activities(self) -> list[dict]:
+        data = await self._request("enumerations/time_entry_activities.json")
+        return data.get("time_entry_activities", [])
 
     async def get_current_user(self) -> dict:
         data = await self._request("users/current.json")

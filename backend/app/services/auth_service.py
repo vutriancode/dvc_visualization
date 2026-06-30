@@ -8,6 +8,29 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from app.models.config import User
 
+# ── Personal Access Tokens ────────────────────────────────────────────────────
+
+def generate_pat(user_id: str) -> str:
+    """Generate a new Personal Access Token, persist its SHA-256 hash, return plain token (shown once)."""
+    from app.services.config_service import config_service
+    token = "pat_" + secrets.token_urlsafe(32)
+    h = hashlib.sha256(token.encode()).hexdigest()
+    prefix = token[:12]  # "pat_" + first 8 chars
+    config_service.set_user_api_token(user_id, h, prefix)
+    return token
+
+
+def verify_pat(token: str) -> "User | None":
+    """Return the User whose PAT matches this token, or None."""
+    from app.services.config_service import config_service
+    if not isinstance(token, str) or not token.startswith("pat_"):
+        return None
+    h = hashlib.sha256(token.encode()).hexdigest()
+    for user in config_service.list_users():
+        if user.api_token_hash and hmac.compare_digest(user.api_token_hash, h):
+            return user
+    return None
+
 
 def hash_password(password: str) -> str:
     """Hash a password using PBKDF2-HMAC-SHA256.

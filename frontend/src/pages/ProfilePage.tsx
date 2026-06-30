@@ -1,7 +1,7 @@
 import { useState, useEffect, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
-import { User, KeyRound, Shield, ArrowLeft, Loader2, Check, Eye, EyeOff } from "lucide-react";
+import { User, KeyRound, Shield, ArrowLeft, Loader2, Check, Eye, EyeOff, Terminal, Copy, RefreshCw, Trash2, X } from "lucide-react";
 
 const TOKEN_KEY = "dashboard_token";
 
@@ -30,6 +30,86 @@ interface CredStatus {
   redmine_api_key_set: boolean;
 }
 
+interface PatStatus {
+  has_token: boolean;
+  prefix: string;
+}
+
+function PatModal({ token, onClose }: { token: string; onClose: () => void }) {
+  const [copied, setCopied] = useState<"token" | "config" | null>(null);
+
+  const mcpConfig = JSON.stringify({
+    mcpServers: {
+      dashboard: { url: `http://localhost:3005/sse?token=${token}` },
+      redmine:   { url: `http://localhost:3006/sse?token=${token}` },
+    },
+  }, null, 2);
+
+  function copy(text: string, kind: "token" | "config") {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(kind);
+      setTimeout(() => setCopied(null), 2000);
+    });
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <h3 className="font-semibold text-gray-800">Personal Access Token</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+        </div>
+        <div className="p-6 space-y-5">
+          <div className="flex items-start gap-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
+            <span className="text-base">⚠️</span>
+            <span>Sao chép token ngay bây giờ — sẽ không hiển thị lại sau khi đóng cửa sổ này.</span>
+          </div>
+
+          {/* Token */}
+          <div>
+            <p className="text-xs font-medium text-gray-500 mb-1.5">Token của bạn</p>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 text-xs bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 font-mono break-all text-gray-800 select-all">
+                {token}
+              </code>
+              <button
+                onClick={() => copy(token, "token")}
+                className="shrink-0 p-2 rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-500 hover:text-gray-700 transition"
+              >
+                {copied === "token" ? <Check size={15} className="text-green-500" /> : <Copy size={15} />}
+              </button>
+            </div>
+          </div>
+
+          {/* MCP config */}
+          <div>
+            <p className="text-xs font-medium text-gray-500 mb-1.5">Cấu hình MCP cho Claude Desktop (dán vào <code className="bg-gray-100 px-1 rounded">claude_desktop_config.json</code>)</p>
+            <div className="relative">
+              <pre className="text-xs bg-gray-50 border border-gray-200 rounded-lg px-3 py-2.5 font-mono text-gray-800 overflow-x-auto whitespace-pre-wrap">
+                {mcpConfig}
+              </pre>
+              <button
+                onClick={() => copy(mcpConfig, "config")}
+                className="absolute top-2 right-2 p-1.5 rounded-md bg-white border border-gray-200 hover:bg-gray-50 text-gray-500 hover:text-gray-700 transition"
+              >
+                {copied === "config" ? <Check size={13} className="text-green-500" /> : <Copy size={13} />}
+              </button>
+            </div>
+          </div>
+        </div>
+        <div className="flex justify-end px-6 py-4 border-t border-gray-100">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition"
+          >
+            Đã sao chép, đóng lại
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ProfilePage() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
@@ -48,6 +128,46 @@ export function ProfilePage() {
   const [pwMsg, setPwMsg] = useState("");
   const [pwErr, setPwErr] = useState("");
   const [showNewPw, setShowNewPw] = useState(false);
+
+  // --- PAT ---
+  const [patStatus, setPatStatus] = useState<PatStatus | null>(null);
+  const [patLoading, setPatLoading] = useState(false);
+  const [patErr, setPatErr] = useState("");
+  const [newPat, setNewPat] = useState<string | null>(null); // shown once in modal
+
+  useEffect(() => {
+    apiFetch<PatStatus>("/api/users/me/token/status")
+      .then(setPatStatus)
+      .catch(() => {});
+  }, []);
+
+  async function handleGeneratePat() {
+    setPatLoading(true);
+    setPatErr("");
+    try {
+      const { token } = await apiFetch<{ token: string }>("/api/users/me/token", { method: "POST" });
+      setNewPat(token);
+      setPatStatus({ has_token: true, prefix: token.slice(0, 12) });
+    } catch (err: unknown) {
+      setPatErr(err instanceof Error ? err.message : "Lỗi khi tạo token");
+    } finally {
+      setPatLoading(false);
+    }
+  }
+
+  async function handleRevokePat() {
+    if (!confirm("Revoke token? Các MCP đang dùng token này sẽ mất quyền truy cập.")) return;
+    setPatLoading(true);
+    setPatErr("");
+    try {
+      await apiFetch("/api/users/me/token", { method: "DELETE" });
+      setPatStatus({ has_token: false, prefix: "" });
+    } catch (err: unknown) {
+      setPatErr(err instanceof Error ? err.message : "Lỗi khi revoke token");
+    } finally {
+      setPatLoading(false);
+    }
+  }
 
   // --- Credentials ---
   const [credStatus, setCredStatus] = useState<CredStatus | null>(null);
@@ -383,7 +503,77 @@ export function ProfilePage() {
           </form>
         </div>
 
+        {/* Personal Access Token */}
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="flex items-center gap-2.5 px-6 py-4 border-b border-gray-100 bg-gray-50">
+            <Terminal size={16} className="text-gray-400" />
+            <h2 className="text-sm font-semibold text-gray-700">MCP Personal Access Token</h2>
+          </div>
+          <div className="p-6 space-y-4">
+            <p className="text-xs text-gray-500 leading-relaxed">
+              Tạo một token lâu dài để nhúng vào URL của MCP server trong Claude Desktop.
+              MCP sẽ tự động dùng GitLab token và Redmine API key trong tài khoản của bạn.
+            </p>
+
+            {patStatus?.has_token ? (
+              <div className="flex items-center justify-between bg-gray-50 border border-gray-200 rounded-lg px-4 py-3">
+                <div>
+                  <p className="text-xs text-gray-500 mb-0.5">Token hiện tại</p>
+                  <code className="text-sm font-mono text-gray-700">{patStatus.prefix}…</code>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleGeneratePat}
+                    disabled={patLoading}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-amber-700
+                      bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 transition disabled:opacity-50"
+                  >
+                    {patLoading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                    Tạo lại
+                  </button>
+                  <button
+                    onClick={handleRevokePat}
+                    disabled={patLoading}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600
+                      bg-red-50 border border-red-200 rounded-lg hover:bg-red-100 transition disabled:opacity-50"
+                  >
+                    {patLoading ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                    Revoke
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={handleGeneratePat}
+                disabled={patLoading}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium
+                  rounded-lg hover:bg-blue-700 disabled:opacity-50 transition"
+              >
+                {patLoading ? <Loader2 size={14} className="animate-spin" /> : <Terminal size={14} />}
+                Tạo Personal Access Token
+              </button>
+            )}
+
+            {patErr && (
+              <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{patErr}</div>
+            )}
+
+            {patStatus?.has_token && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-xs text-blue-700 space-y-1">
+                <p className="font-medium">Cách dùng trong Claude Desktop:</p>
+                <code className="block mt-1 text-xs font-mono bg-white border border-blue-100 rounded px-2 py-1 text-gray-700">
+                  {`"url": "http://localhost:3005/sse?token=${patStatus.prefix}…"`}
+                </code>
+                <p className="text-blue-600">Nhấn "Tạo lại" để xem lại config đầy đủ với token thật.</p>
+              </div>
+            )}
+          </div>
+        </div>
+
       </div>
+
+      {/* PAT modal — shown once after generation */}
+      {newPat && <PatModal token={newPat} onClose={() => setNewPat(null)} />}
     </div>
   );
 }

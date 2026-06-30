@@ -3,26 +3,20 @@ import os
 
 import httpx
 
+from .context import user_token_var
+
 BASE_URL = os.environ.get("DASHBOARD_URL", "http://localhost:3004/api").rstrip("/")
 
 
 def get(path: str, params: dict = None) -> dict:
-    """Perform a GET request against the dashboard API.
-
-    Args:
-        path: API path relative to BASE_URL (e.g. '/managed-projects').
-        params: Optional query-string parameters dict.
-
-    Returns:
-        Parsed JSON response body (dict or list).
-
-    Raises:
-        httpx.HTTPStatusError: Re-raised with a human-readable message on 4xx/5xx.
-        httpx.RequestError: On network-level failures.
-    """
+    """Perform a GET request against the dashboard API, forwarding the user token."""
     url = f"{BASE_URL}/{path.lstrip('/')}"
+    token = user_token_var.get()
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     try:
-        response = httpx.get(url, params=params, timeout=30)
+        response = httpx.get(url, params=params, headers=headers, timeout=30)
         response.raise_for_status()
         return response.json()
     except httpx.HTTPStatusError as exc:

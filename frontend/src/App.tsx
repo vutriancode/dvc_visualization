@@ -11,6 +11,8 @@ import { ProjectsPage } from "./pages/ProjectsPage";
 import { ProjectDetailPage } from "./pages/ProjectDetailPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProfilePage } from "./pages/ProfilePage";
+import { McpSetupPage } from "./pages/McpSetupPage";
+import { HotfixPage } from "./pages/HotfixPage";
 import { UserManagementPage } from "./pages/UserManagementPage";
 import { ChatSidebar } from "./components/ChatSidebar";
 
@@ -74,6 +76,14 @@ export default function App() {
               }
             />
             <Route
+              path="/redmine/hotfix"
+              element={
+                <AuthGuard>
+                  <HotfixPage />
+                </AuthGuard>
+              }
+            />
+            <Route
               path="/projects"
               element={
                 <AuthGuard>
@@ -94,6 +104,14 @@ export default function App() {
               element={
                 <AuthGuard>
                   <ProfilePage />
+                </AuthGuard>
+              }
+            />
+            <Route
+              path="/mcp"
+              element={
+                <AuthGuard>
+                  <McpSetupPage />
                 </AuthGuard>
               }
             />

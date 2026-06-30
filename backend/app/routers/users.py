@@ -129,3 +129,34 @@ def update_my_credentials(payload: UpdateCredentialsRequest, request: Request):
         gitlab_token_set=bool(updated.credentials.gitlab_token),
         redmine_api_key_set=bool(updated.credentials.redmine_api_key),
     )
+
+
+# ── Personal Access Tokens ────────────────────────────────────────────────────
+
+class PatStatusOut(BaseModel):
+    has_token: bool
+    prefix: str  # e.g. "pat_AbCdEfGh" — first 12 chars, safe to display
+
+
+@router.get("/me/token/status", response_model=PatStatusOut)
+def my_token_status(request: Request):
+    user = _require_auth(request)
+    fresh = config_service.get_user(user.id)
+    if not fresh:
+        raise HTTPException(status_code=404, detail="User not found")
+    return PatStatusOut(has_token=bool(fresh.api_token_hash), prefix=fresh.api_token_prefix)
+
+
+@router.post("/me/token")
+def generate_my_token(request: Request):
+    """Generate a new PAT. The plain token is returned ONCE — not stored."""
+    user = _require_auth(request)
+    from app.services.auth_service import generate_pat
+    token = generate_pat(user.id)
+    return {"token": token}
+
+
+@router.delete("/me/token", status_code=204)
+def revoke_my_token(request: Request):
+    user = _require_auth(request)
+    config_service.revoke_user_api_token(user.id)

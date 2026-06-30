@@ -322,7 +322,7 @@ class ConfigService:
             if u.id == user_id:
                 current = u.model_dump()
                 # Only allow updating these fields
-                allowed = {"display_name", "password_hash", "role"}
+                allowed = {"display_name", "password_hash", "role", "api_token_hash", "api_token_prefix"}
                 for key in allowed:
                     if key in data and data[key] is not None:
                         current[key] = data[key]
@@ -357,6 +357,12 @@ class ConfigService:
                 self._save(cfg)
                 return cfg.users[i]
         return None
+
+    def set_user_api_token(self, user_id: str, token_hash: str, token_prefix: str) -> User | None:
+        return self.update_user(user_id, {"api_token_hash": token_hash, "api_token_prefix": token_prefix})
+
+    def revoke_user_api_token(self, user_id: str) -> bool:
+        return self.update_user(user_id, {"api_token_hash": "", "api_token_prefix": ""}) is not None
 
 
 config_service = ConfigService()

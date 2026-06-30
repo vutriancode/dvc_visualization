@@ -191,6 +191,39 @@ def get_project_context(project_id: str) -> str:
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+def _make_token_middleware(app):
+    """Pure-ASGI middleware: extracts user token from ?token= or Authorization header.
+
+    Works with SSE (streaming) because it never buffers the response body.
+    Python's asyncio inherits ContextVar values into child tasks created from
+    the current context, so the value set here is visible in all tool calls.
+    """
+    from urllib.parse import parse_qs
+    from .context import user_token_var
+
+    async def middleware(scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            qs = scope.get("query_string", b"").decode()
+            params = parse_qs(qs)
+            token = params.get("token", [""])[0]
+            if not token:
+                for k, v in scope.get("headers", []):
+                    if k.lower() == b"authorization":
+                        auth = v.decode()
+                        if auth.lower().startswith("bearer "):
+                            token = auth[7:]
+                        break
+            ctx = user_token_var.set(token)
+            try:
+                await app(scope, receive, send)
+            finally:
+                user_token_var.reset(ctx)
+        else:
+            await app(scope, receive, send)
+
+    return middleware
+
+
 def main():
     import argparse
 
@@ -206,8 +239,19 @@ def main():
     args = parser.parse_args()
 
     if args.transport == "sse":
+        import uvicorn as _uvicorn
+
         mcp.settings.host = args.host
         mcp.settings.port = args.port
+
+        # Monkey-patch uvicorn.run to wrap the FastMCP SSE app with our token middleware.
+        # FastMCP calls uvicorn.run(starlette_app, ...) internally — we intercept it here.
+        _orig_run = _uvicorn.run
+
+        def _patched_run(app, **kwargs):
+            _orig_run(_make_token_middleware(app), **kwargs)
+
+        _uvicorn.run = _patched_run
 
     mcp.run(transport=args.transport)
 

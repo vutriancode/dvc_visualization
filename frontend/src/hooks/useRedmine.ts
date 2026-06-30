@@ -241,3 +241,139 @@ export function useSaveRedmineStatusMapping() {
     },
   });
 }
+
+// ── Export Time Entries ──────────────────────────────────────────────────────
+
+export interface ExportReportParams {
+  project_ids: string[];
+  user_ids: number[];
+  from_date: string;
+  to_date: string;
+}
+
+async function downloadExcel(endpoint: string, params: ExportReportParams, fallbackFilename: string) {
+  const p = new URLSearchParams();
+  if (params.project_ids.length) p.set("project_ids", params.project_ids.join(","));
+  p.set("user_ids", params.user_ids.join(","));
+  p.set("from_date", params.from_date);
+  p.set("to_date", params.to_date);
+
+  const token = localStorage.getItem("dashboard_token");
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const resp = await fetch(`${endpoint}?${p}`, { headers });
+  if (!resp.ok) {
+    let detail = resp.statusText;
+    try { detail = (await resp.json()).detail ?? detail; } catch { /* ignore */ }
+    throw new Error(detail);
+  }
+
+  const blob = await resp.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const cd = resp.headers.get("Content-Disposition") ?? "";
+  const match = cd.match(/filename\*=UTF-8''(.+)/i) ?? cd.match(/filename="?([^";\n]+)"?/i);
+  a.download = match ? decodeURIComponent(match[1]) : fallbackFilename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+export function useExportTimeEntries() {
+  return useMutation<void, Error, ExportReportParams>({
+    mutationFn: (params) => downloadExcel("/api/redmine/export/time-entries", params, "LogTime.xlsx"),
+  });
+}
+
+export function useExportOTReport() {
+  return useMutation<void, Error, ExportReportParams>({
+    mutationFn: (params) => downloadExcel("/api/redmine/export/ot", params, "OT_Report.xlsx"),
+  });
+}
+
+// ── Time Entries ─────────────────────────────────────────────────────────────
+
+export interface LogTimeParams {
+  issue_id: number;
+  hours: number;
+  spent_on: string;
+  activity_id?: number;
+  comments?: string;
+}
+
+export function useLogTime() {
+  const qc = useQueryClient();
+  return useMutation<unknown, Error, LogTimeParams>({
+    mutationFn: ({ issue_id, ...data }) =>
+      api(`/api/redmine/issues/${issue_id}/time-entries`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      }),
+    onSuccess: (_r, vars) => {
+      qc.invalidateQueries({ queryKey: ["redmine-issue", vars.issue_id] });
+      qc.invalidateQueries({ queryKey: ["redmine-issues"] });
+      qc.invalidateQueries({ queryKey: ["redmine-logged-ids"] });
+    },
+  });
+}
+
+export interface LoggedIdsParams {
+  project_id?: string;
+  from_date?: string;
+  to_date?: string;
+  member_ids?: number[];
+}
+
+export function useLoggedIssueIds(params: LoggedIdsParams) {
+  const p = new URLSearchParams();
+  if (params.project_id) p.set("project_id", params.project_id);
+  if (params.from_date) p.set("from_date", params.from_date);
+  if (params.to_date) p.set("to_date", params.to_date);
+  if (params.member_ids?.length) p.set("member_ids", params.member_ids.join(","));
+
+  return useQuery<number[]>({
+    queryKey: ["redmine-logged-ids", params],
+    queryFn: () => api(`/api/redmine/logged-issue-ids?${p}`),
+    // Chỉ fetch khi có member_ids — đảm bảo members đã load, tránh gọi không có user_id
+    enabled: !!(params.from_date && params.to_date && params.member_ids?.length),
+    staleTime: 0,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useTimeActivities() {
+  return useQuery<{ id: number; name: string }[]>({
+    queryKey: ["redmine-time-activities"],
+    queryFn: () => api("/api/redmine/time-activities"),
+    staleTime: 10 * 60 * 1000,
+  });
+}
+
+// ── Hotfix / Sprint QA ───────────────────────────────────────────────────────
+
+export interface HotfixData {
+  all_issues: RedmineIssue[];
+  qa_verified_today: RedmineIssue[];
+  status_counts: Record<string, number>;
+  today: string;
+  project_id: string | null;
+  query_id: number | null;
+  total: number;
+}
+
+export function useHotfixIssues(queryUrl: string, qaStatus: string = "QA Verified") {
+  const params = new URLSearchParams();
+  if (queryUrl) params.set("query_url", queryUrl);
+  if (qaStatus) params.set("qa_status", qaStatus);
+
+  return useQuery<HotfixData>({
+    queryKey: ["redmine-hotfix", queryUrl, qaStatus],
+    queryFn: () => api(`/api/redmine/hotfix?${params}`),
+    enabled: !!queryUrl,
+    retry: false,
+    refetchOnWindowFocus: false,
+  });
+}

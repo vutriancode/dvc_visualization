@@ -1,8 +1,11 @@
 """Redmine project management API endpoints."""
 import asyncio
-from datetime import date, timedelta
+import io
+from datetime import date, datetime, timedelta
 from typing import Optional
+from urllib.parse import quote
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.services.redmine_service import redmine_service
@@ -140,6 +143,55 @@ async def update_issue(issue_id: int, payload: UpdateIssuePayload):
 async def delete_issue(issue_id: int):
     try:
         await redmine_service.delete_issue(issue_id)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+class LogTimePayload(BaseModel):
+    hours: float
+    spent_on: str
+    activity_id: Optional[int] = None
+    comments: str = ""
+
+
+@router.post("/issues/{issue_id}/time-entries", status_code=201)
+async def log_time(issue_id: int, payload: LogTimePayload):
+    try:
+        return await redmine_service.create_time_entry(
+            issue_id=issue_id,
+            hours=payload.hours,
+            spent_on=payload.spent_on,
+            activity_id=payload.activity_id,
+            comments=payload.comments,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/time-activities")
+async def list_time_activities():
+    try:
+        return await redmine_service.list_time_activities()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@router.get("/logged-issue-ids")
+async def get_logged_issue_ids(
+    project_id: Optional[str] = Query(default=None),
+    from_date: Optional[str] = Query(default=None),
+    to_date: Optional[str] = Query(default=None),
+    member_ids: Optional[str] = Query(default=None),
+):
+    try:
+        user_ids = [int(x) for x in member_ids.split(",") if x] if member_ids else None
+        ids = await redmine_service.list_logged_issue_ids(
+            project_id=project_id,
+            from_date=from_date,
+            to_date=to_date,
+            user_ids=user_ids,
+        )
+        return ids
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
@@ -439,5 +491,410 @@ async def get_member_stats(
             "to_date": end.isoformat(),
             "days": days,
         }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# ── Export Time Entries to Excel ──────────────────────────────────────────────
+
+@router.get("/hotfix")
+async def get_hotfix_issues(
+    query_url: str = Query(..., description="Full Redmine query URL, e.g. https://redmine.example.com/projects/my-project/issues?query_id=123"),
+    qa_status: str = Query(default="QA Verified", description="Comma-separated status names counted as QA verified"),
+):
+    """
+    Lấy tất cả issues từ sprint query URL, trả về toàn bộ danh sách
+    và danh sách các issue đã được QA Verified trong ngày hôm nay.
+    """
+    try:
+        from urllib.parse import urlparse, parse_qs
+
+        parsed = urlparse(query_url)
+        path_parts = [p for p in parsed.path.split("/") if p]
+        project_id: str | None = None
+        if "projects" in path_parts:
+            idx = path_parts.index("projects")
+            if idx + 1 < len(path_parts):
+                project_id = path_parts[idx + 1]
+
+        qs = parse_qs(parsed.query)
+        query_id: int | None = int(qs["query_id"][0]) if "query_id" in qs else None
+
+        if not project_id and not query_id:
+            raise HTTPException(status_code=400, detail="URL không hợp lệ — cần chứa project identifier và/hoặc query_id")
+
+        all_issues: list[dict] = []
+        offset = 0
+        while True:
+            issues, total = await redmine_service.list_issues(
+                project_id=project_id,
+                query_id=query_id,
+                status_id="*",
+                limit=100,
+                offset=offset,
+            )
+            all_issues.extend(issues)
+            offset += len(issues)
+            if offset >= total or not issues:
+                break
+
+        today_str = date.today().isoformat()
+        qa_status_names = {s.strip() for s in qa_status.split(",") if s.strip()}
+
+        qa_today = [
+            i for i in all_issues
+            if i.get("status", {}).get("name", "") in qa_status_names
+            and (i.get("updated_on") or "")[:10] == today_str
+        ]
+
+        # Count by status
+        status_counts: dict[str, int] = {}
+        for issue in all_issues:
+            sname = issue.get("status", {}).get("name", "Unknown")
+            status_counts[sname] = status_counts.get(sname, 0) + 1
+
+        return {
+            "all_issues": all_issues,
+            "qa_verified_today": qa_today,
+            "status_counts": status_counts,
+            "today": today_str,
+            "project_id": project_id,
+            "query_id": query_id,
+            "total": len(all_issues),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# ── Export Time Entries to Excel ──────────────────────────────────────────────
+
+@router.get("/export/time-entries")
+async def export_time_entries(
+    project_ids: str = Query(default="", description="Comma-separated project identifiers; empty = all"),
+    user_ids: str = Query(default="", description="Comma-separated user IDs"),
+    from_date: Optional[str] = Query(default=None, description="YYYY-MM-DD"),
+    to_date: Optional[str] = Query(default=None, description="YYYY-MM-DD"),
+):
+    """Xuất báo cáo log time theo thành viên ra file Excel."""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        pids: list[Optional[str]] = [x.strip() for x in project_ids.split(",") if x.strip()] or [None]
+        ids = [int(x) for x in user_ids.split(",") if x.strip().isdigit()]
+        if not ids:
+            raise HTTPException(status_code=400, detail="Cần chọn ít nhất một thành viên")
+
+        today = date.today()
+        end = date.fromisoformat(to_date) if to_date else today
+        start = date.fromisoformat(from_date) if from_date else date(today.year, today.month, 1)
+
+        # Get member names from all selected projects
+        members_info: dict[int, str] = {}
+        for pid in pids:
+            if pid:
+                try:
+                    ml = await redmine_service.list_members(pid)
+                    for m in ml:
+                        members_info.setdefault(m["id"], m["name"])
+                except Exception:
+                    pass
+
+        async def fetch_user_entries(user_id: int) -> tuple[int, list[dict]]:
+            """Fetch time entries cho user across tất cả projects đã chọn, dedup theo entry id."""
+            seen: set[int] = set()
+            collected: list[dict] = []
+            for pid in pids:
+                offset = 0
+                while True:
+                    entries, total = await redmine_service.list_time_entries(
+                        project_id=pid,
+                        user_id=user_id,
+                        from_date=start.isoformat(),
+                        to_date=end.isoformat(),
+                        limit=100,
+                        offset=offset,
+                    )
+                    for e in entries:
+                        eid = e.get("id", 0)
+                        if eid not in seen:
+                            seen.add(eid)
+                            collected.append(e)
+                    offset += len(entries)
+                    if offset >= total or not entries:
+                        break
+            return user_id, collected
+
+        results = await asyncio.gather(*[fetch_user_entries(uid) for uid in ids])
+
+        # Build Excel
+        wb = Workbook()
+        wb.remove(wb.active)
+
+        header_fill = PatternFill(start_color="CFE2F3", end_color="CFE2F3", fill_type="solid")
+        header_font = Font(bold=True, name="Calibri", size=11)
+        thin = Side(border_style="thin", color="000000")
+        cell_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        left_align = Alignment(horizontal="left", vertical="top", wrap_text=True)
+
+        HEADERS = ["Ngày OT", "Họ và Tên", "Tên dự án", "Nội dung công việc", "Số giờ ", "Người Duyệt", "Ghi chú"]
+        COL_WIDTHS = [15, 22, 25, 65, 10, 20, 25]
+
+        for user_id, entries in results:
+            member_name = members_info.get(user_id, f"User_{user_id}")
+            ws = wb.create_sheet(title=member_name[:31])
+
+            for col_idx, (header, width) in enumerate(zip(HEADERS, COL_WIDTHS), start=1):
+                cell = ws.cell(row=1, column=col_idx, value=header)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = center_align
+                cell.border = cell_border
+                ws.column_dimensions[get_column_letter(col_idx)].width = width
+            ws.row_dimensions[1].height = 30
+
+            sorted_entries = sorted(entries, key=lambda e: e.get("spent_on", ""))
+            for row_idx, entry in enumerate(sorted_entries, start=2):
+                spent_on = entry.get("spent_on", "")
+                try:
+                    date_val: datetime | str = datetime.strptime(spent_on, "%Y-%m-%d") if spent_on else ""
+                except Exception:
+                    date_val = spent_on
+
+                comments = entry.get("comments", "")
+                row_data = [
+                    date_val,
+                    entry.get("user", {}).get("name", member_name),
+                    entry.get("project", {}).get("name", ""),
+                    comments,
+                    entry.get("hours", 0),
+                    "",  # Người Duyệt (không có trong Redmine time entries)
+                    entry.get("activity", {}).get("name", ""),
+                ]
+                for col_idx, value in enumerate(row_data, start=1):
+                    cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                    cell.border = cell_border
+                    if col_idx == 1:
+                        cell.alignment = center_align
+                        if date_val and not isinstance(date_val, str):
+                            cell.number_format = "DD/MM/YYYY"
+                    elif col_idx == 5:
+                        cell.alignment = center_align
+                    else:
+                        cell.alignment = left_align
+                ws.row_dimensions[row_idx].height = max(20, min(20 + len(str(comments)) // 50 * 15, 80))
+
+            ws.freeze_panes = "A2"
+
+        if not wb.sheetnames:
+            ws = wb.create_sheet("Không có dữ liệu")
+            ws.cell(row=1, column=1, value="Không có dữ liệu trong khoảng thời gian đã chọn")
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        filename = f"LogTime_{start.strftime('%Y%m%d')}_{end.strftime('%Y%m%d')}.xlsx"
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# ── Export OT Report to Excel ─────────────────────────────────────────────────
+
+@router.get("/export/ot")
+async def export_ot_report(
+    project_ids: str = Query(default="", description="Comma-separated project identifiers; empty = all"),
+    user_ids: str = Query(default="", description="Comma-separated user IDs"),
+    from_date: Optional[str] = Query(default=None, description="YYYY-MM-DD"),
+    to_date: Optional[str] = Query(default=None, description="YYYY-MM-DD"),
+):
+    """Xuất báo cáo OT (task bắt đầu bằng [OT]) theo thành viên ra file Excel."""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        pids: list[Optional[str]] = [x.strip() for x in project_ids.split(",") if x.strip()] or [None]
+        ids = [int(x) for x in user_ids.split(",") if x.strip().isdigit()]
+        if not ids:
+            raise HTTPException(status_code=400, detail="Cần chọn ít nhất một thành viên")
+
+        today = date.today()
+        end = date.fromisoformat(to_date) if to_date else today
+        start = date.fromisoformat(from_date) if from_date else date(today.year, today.month, 1)
+
+        # Get member names
+        members_info: dict[int, str] = {}
+        for pid in pids:
+            if pid:
+                try:
+                    ml = await redmine_service.list_members(pid)
+                    for m in ml:
+                        members_info.setdefault(m["id"], m["name"])
+                except Exception:
+                    pass
+
+        async def fetch_ot_entries_for_user(user_id: int) -> tuple[int, list[dict]]:
+            """
+            1. Fetch all time entries in date range for user across all projects.
+            2. Collect unique issue IDs from those entries.
+            3. Fetch each issue and keep only those with subject starting with [OT].
+            4. Return filtered time entries mapped with issue info.
+            """
+            # Step 1: fetch time entries
+            seen_entry_ids: set[int] = set()
+            all_entries: list[dict] = []
+            for pid in pids:
+                offset = 0
+                while True:
+                    entries, total = await redmine_service.list_time_entries(
+                        project_id=pid,
+                        user_id=user_id,
+                        from_date=start.isoformat(),
+                        to_date=end.isoformat(),
+                        limit=100,
+                        offset=offset,
+                    )
+                    for e in entries:
+                        eid = e.get("id", 0)
+                        if eid not in seen_entry_ids:
+                            seen_entry_ids.add(eid)
+                            all_entries.append(e)
+                    offset += len(entries)
+                    if offset >= total or not entries:
+                        break
+
+            # Step 2: collect unique issue IDs
+            issue_ids = {
+                e["issue"]["id"]
+                for e in all_entries
+                if e.get("issue", {}).get("id")
+            }
+
+            # Step 3: fetch issues concurrently and filter [OT]
+            async def fetch_issue_safe(iid: int) -> tuple[int, dict]:
+                try:
+                    issue = await redmine_service.get_issue(iid)
+                    return iid, issue
+                except Exception:
+                    return iid, {}
+
+            issue_results = await asyncio.gather(*[fetch_issue_safe(iid) for iid in issue_ids])
+            ot_issues: dict[int, dict] = {
+                iid: issue
+                for iid, issue in issue_results
+                if issue.get("subject", "").startswith("[OT]")
+            }
+
+            # Step 4: filter entries to OT issues only, attach issue data
+            ot_entries: list[dict] = []
+            for entry in all_entries:
+                iid = entry.get("issue", {}).get("id")
+                if iid and iid in ot_issues:
+                    enriched = dict(entry)
+                    enriched["_ot_issue"] = ot_issues[iid]
+                    ot_entries.append(enriched)
+
+            return user_id, ot_entries
+
+        results = await asyncio.gather(*[fetch_ot_entries_for_user(uid) for uid in ids])
+
+        # Build Excel
+        wb = Workbook()
+        wb.remove(wb.active)
+
+        header_fill = PatternFill(start_color="CFE2F3", end_color="CFE2F3", fill_type="solid")
+        header_font = Font(bold=True, name="Calibri", size=11)
+        thin = Side(border_style="thin", color="000000")
+        cell_border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        left_align = Alignment(horizontal="left", vertical="top", wrap_text=True)
+
+        HEADERS = ["Ngày OT", "Họ và Tên", "Tên dự án", "Nội dung công việc", "Số giờ ", "Người Duyệt", "Ghi chú"]
+        COL_WIDTHS = [15, 22, 25, 65, 10, 20, 25]
+
+        for user_id, entries in results:
+            member_name = members_info.get(user_id, f"User_{user_id}")
+            ws = wb.create_sheet(title=member_name[:31])
+
+            for col_idx, (header, width) in enumerate(zip(HEADERS, COL_WIDTHS), start=1):
+                cell = ws.cell(row=1, column=col_idx, value=header)
+                cell.fill = header_fill
+                cell.font = header_font
+                cell.alignment = center_align
+                cell.border = cell_border
+                ws.column_dimensions[get_column_letter(col_idx)].width = width
+            ws.row_dimensions[1].height = 30
+
+            sorted_entries = sorted(entries, key=lambda e: e.get("spent_on", ""))
+            for row_idx, entry in enumerate(sorted_entries, start=2):
+                spent_on = entry.get("spent_on", "")
+                try:
+                    date_val: datetime | str = datetime.strptime(spent_on, "%Y-%m-%d") if spent_on else ""
+                except Exception:
+                    date_val = spent_on
+
+                issue = entry.get("_ot_issue", {})
+                # Strip "[OT]" prefix for work content, show issue subject + comments
+                issue_subject = issue.get("subject", "")
+                work_content_parts = []
+                if issue_subject:
+                    work_content_parts.append(issue_subject)
+                comments = entry.get("comments", "")
+                if comments:
+                    work_content_parts.append(comments)
+                work_content = "\n".join(work_content_parts)
+
+                row_data = [
+                    date_val,
+                    entry.get("user", {}).get("name", member_name),
+                    entry.get("project", {}).get("name", ""),
+                    work_content,
+                    entry.get("hours", 0),
+                    "",  # Người Duyệt
+                    entry.get("activity", {}).get("name", ""),
+                ]
+                for col_idx, value in enumerate(row_data, start=1):
+                    cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                    cell.border = cell_border
+                    if col_idx == 1:
+                        cell.alignment = center_align
+                        if date_val and not isinstance(date_val, str):
+                            cell.number_format = "DD/MM/YYYY"
+                    elif col_idx == 5:
+                        cell.alignment = center_align
+                    else:
+                        cell.alignment = left_align
+                ws.row_dimensions[row_idx].height = max(20, min(20 + len(str(work_content)) // 50 * 15, 80))
+
+            ws.freeze_panes = "A2"
+
+        if not wb.sheetnames:
+            ws = wb.create_sheet("Không có dữ liệu")
+            ws.cell(row=1, column=1, value="Không có task OT nào trong khoảng thời gian đã chọn")
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+
+        filename = f"OT_{start.strftime('%Y%m%d')}_{end.strftime('%Y%m%d')}.xlsx"
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+        )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))

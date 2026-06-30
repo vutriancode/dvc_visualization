@@ -254,6 +254,7 @@ export interface RedmineIssue {
   parent?: { id: number };
   done_ratio: number;
   estimated_hours?: number;
+  spent_hours?: number;
   due_date?: string;
   created_on: string;
   updated_on: string;
