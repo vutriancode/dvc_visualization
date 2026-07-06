@@ -568,6 +568,92 @@ async def get_hotfix_issues(
         raise HTTPException(status_code=502, detail=str(e))
 
 
+class CreateDeployTaskPayload(BaseModel):
+    project_id: str
+    issue_ids: list[int]
+    tracker_id: Optional[int] = None
+    subject: Optional[str] = None
+
+
+@router.post("/hotfix/deploy-task", status_code=201)
+async def create_deploy_task(payload: CreateDeployTaskPayload):
+    """
+    Tạo task deploy stg tổng hợp các issue đã QA Verified, theo format:
+    subject "deploy stg task ngày DD-MM-YYYY", description liệt kê "task #id #id ...",
+    và tạo quan hệ "relates" tới từng issue.
+    """
+    if not payload.issue_ids:
+        raise HTTPException(status_code=400, detail="Cần ít nhất một issue để tạo task deploy")
+    try:
+        tracker_id = payload.tracker_id
+        if tracker_id is None:
+            trackers = await redmine_service.list_trackers()
+            task_tracker = next((t for t in trackers if t.get("name", "").strip().lower() == "task"), None)
+            tracker_id = task_tracker["id"] if task_tracker else (trackers[0]["id"] if trackers else None)
+
+        subject = payload.subject or f"deploy stg task ngày {date.today().strftime('%d-%m-%Y')}"
+        description = "task " + " ".join(f"#{iid}" for iid in payload.issue_ids)
+
+        # Nhiều project Redmine bắt buộc category/fixed_version/custom fields khi tạo issue.
+        # Lấy các giá trị này từ các issue QA Verified liên quan để đảm bảo hợp lệ với project
+        # (issue đầu tiên có thể thiếu category/fixed_version nên cần dò qua tất cả).
+        category_id = None
+        fixed_version_id = None
+        custom_fields_map: dict[int, dict] = {}
+        try:
+            templates = await asyncio.gather(
+                *[redmine_service.get_issue(iid) for iid in payload.issue_ids],
+                return_exceptions=True,
+            )
+            for t in templates:
+                if isinstance(t, Exception):
+                    continue
+                if category_id is None and t.get("category"):
+                    category_id = t["category"]["id"]
+                if fixed_version_id is None and t.get("fixed_version"):
+                    fixed_version_id = t["fixed_version"]["id"]
+                for cf in t.get("custom_fields", []):
+                    if cf.get("value") and cf["id"] not in custom_fields_map:
+                        custom_fields_map[cf["id"]] = {"id": cf["id"], "value": cf["value"]}
+        except Exception:
+            pass
+
+        if category_id is None:
+            try:
+                project = await redmine_service.get_project(payload.project_id)
+                cats = project.get("issue_categories", [])
+                default_cat = next((c for c in cats if c.get("name", "").strip().lower() == "chung"), None)
+                category_id = default_cat["id"] if default_cat else (cats[0]["id"] if cats else None)
+            except Exception:
+                pass
+
+        custom_fields = list(custom_fields_map.values()) or None
+
+        created = await redmine_service.create_issue(
+            project_id=payload.project_id,
+            subject=subject,
+            description=description,
+            tracker_id=tracker_id,
+            category_id=category_id,
+            fixed_version_id=fixed_version_id,
+            custom_fields=custom_fields,
+        )
+
+        results = await asyncio.gather(
+            *[redmine_service.create_relation(created["id"], iid, "relates") for iid in payload.issue_ids],
+            return_exceptions=True,
+        )
+        relations_failed = [
+            iid for iid, r in zip(payload.issue_ids, results) if isinstance(r, Exception)
+        ]
+
+        return {"issue": created, "relations_failed": relations_failed}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 # ── Export Time Entries to Excel ──────────────────────────────────────────────
 
 @router.get("/export/time-entries")
@@ -628,7 +714,28 @@ async def export_time_entries(
                         break
             return user_id, collected
 
-        results = await asyncio.gather(*[fetch_user_entries(uid) for uid in ids])
+        all_results = await asyncio.gather(*[fetch_user_entries(uid) for uid in ids])
+
+        # Fetch issue subjects for all entries (to populate "Nội dung công việc")
+        all_issue_ids: set[int] = set()
+        for _, entries in all_results:
+            for e in entries:
+                iid = e.get("issue", {}).get("id")
+                if iid:
+                    all_issue_ids.add(iid)
+
+        async def fetch_issue_safe(iid: int) -> tuple[int, str]:
+            try:
+                issue = await redmine_service.get_issue(iid)
+                return iid, issue.get("subject", "")
+            except Exception:
+                return iid, ""
+
+        issue_subjects: dict[int, str] = dict(
+            await asyncio.gather(*[fetch_issue_safe(iid) for iid in all_issue_ids])
+        )
+
+        results = all_results
 
         # Build Excel
         wb = Workbook()
@@ -641,7 +748,7 @@ async def export_time_entries(
         center_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
         left_align = Alignment(horizontal="left", vertical="top", wrap_text=True)
 
-        HEADERS = ["Ngày OT", "Họ và Tên", "Tên dự án", "Nội dung công việc", "Số giờ ", "Người Duyệt", "Ghi chú"]
+        HEADERS = ["Ngày", "Họ và Tên", "Tên dự án", "Nội dung công việc", "Số giờ ", "Người Duyệt", "Ghi chú"]
         COL_WIDTHS = [15, 22, 25, 65, 10, 20, 25]
 
         for user_id, entries in results:
@@ -665,12 +772,18 @@ async def export_time_entries(
                 except Exception:
                     date_val = spent_on
 
+                # Nội dung công việc = tiêu đề issue + ghi chú (comment)
+                iid = entry.get("issue", {}).get("id")
+                issue_subject = issue_subjects.get(iid, "") if iid else ""
                 comments = entry.get("comments", "")
+                work_content_parts = [p for p in [issue_subject, comments] if p]
+                work_content = "\n".join(work_content_parts)
+
                 row_data = [
                     date_val,
                     entry.get("user", {}).get("name", member_name),
                     entry.get("project", {}).get("name", ""),
-                    comments,
+                    work_content,
                     entry.get("hours", 0),
                     "",  # Người Duyệt (không có trong Redmine time entries)
                     entry.get("activity", {}).get("name", ""),
@@ -686,7 +799,7 @@ async def export_time_entries(
                         cell.alignment = center_align
                     else:
                         cell.alignment = left_align
-                ws.row_dimensions[row_idx].height = max(20, min(20 + len(str(comments)) // 50 * 15, 80))
+                ws.row_dimensions[row_idx].height = max(20, min(20 + len(str(work_content)) // 50 * 15, 80))
 
             ws.freeze_panes = "A2"
 

@@ -13,6 +13,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { ProfilePage } from "./pages/ProfilePage";
 import { McpSetupPage } from "./pages/McpSetupPage";
 import { HotfixPage } from "./pages/HotfixPage";
+import { CVATPage } from "./pages/CVATPage";
 import { UserManagementPage } from "./pages/UserManagementPage";
 import { ChatSidebar } from "./components/ChatSidebar";
 
@@ -80,6 +81,14 @@ export default function App() {
               element={
                 <AuthGuard>
                   <HotfixPage />
+                </AuthGuard>
+              }
+            />
+            <Route
+              path="/cvat"
+              element={
+                <AuthGuard>
+                  <CVATPage />
                 </AuthGuard>
               }
             />

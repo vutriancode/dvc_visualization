@@ -6,6 +6,7 @@ import {
   Terminal, FolderOpen, Link, LogOut, Cloud,
 } from "lucide-react";
 import { useRedmineConfig, useUpdateRedmineConfig, useTestRedmineConfig } from "../hooks/useRedmine";
+import { useCVATConfig, useUpdateCVATConfig, useTestCVATConfig } from "../hooks/useCVAT";
 import {
   useProjects, useAddProject, useUpdateProject, useDeleteProject, useTestProject,
   useMinioConfig, useUpdateMinio, useTestMinio,
@@ -1293,11 +1294,124 @@ function RedmineTab() {
   );
 }
 
+// ---- CVAT tab ----
+
+function CVATTab() {
+  const { data: cvat, isLoading } = useCVATConfig();
+  const updateCVAT = useUpdateCVATConfig();
+  const testCVAT = useTestCVATConfig();
+
+  const [form, setForm] = useState({ url: "", username: "", password: "", verify_ssl: true });
+  const [initialized, setInitialized] = useState(false);
+
+  if (cvat && !initialized) {
+    setForm({ url: cvat.url, username: cvat.username, password: "", verify_ssl: cvat.verify_ssl });
+    setInitialized(true);
+  }
+
+  const handleSave = async () => {
+    const payload: Record<string, unknown> = { url: form.url, username: form.username, verify_ssl: form.verify_ssl };
+    if (form.password) payload.password = form.password;
+    await updateCVAT.mutateAsync(payload as Parameters<typeof updateCVAT.mutateAsync>[0]);
+  };
+
+  const handleTest = () => {
+    testCVAT.mutate({ url: form.url, username: form.username, password: form.password });
+  };
+
+  const testStatus = testCVAT.isPending ? "loading" : testCVAT.isSuccess ? "ok" : testCVAT.isError ? "error" : "idle";
+
+  if (isLoading) return <div className="flex justify-center py-10"><Loader2 size={18} className="animate-spin text-gray-300" /></div>;
+
+  return (
+    <div className="space-y-6">
+      <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm space-y-5">
+        <div className="flex items-center gap-3 pb-2 border-b border-gray-100">
+          <div className="p-2 bg-violet-50 rounded-lg text-violet-600">
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <path d="M3 9h18M9 21V9" />
+            </svg>
+          </div>
+          <div>
+            <h2 className="font-semibold text-gray-900">CVAT</h2>
+            <p className="text-xs text-gray-400">Kết nối CVAT để xem thống kê annotation</p>
+          </div>
+          {cvat?.configured && (
+            <span className="ml-auto flex items-center gap-1 text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
+              <CheckCircle size={11} /> Đã kết nối
+            </span>
+          )}
+        </div>
+
+        <Field
+          label="CVAT URL"
+          value={form.url}
+          onChange={(v) => setForm({ ...form, url: v })}
+          placeholder="http://localhost:8080 hoặc https://cvat.company.com"
+          hint="URL của CVAT server (không cần dấu / ở cuối)"
+        />
+        <Field
+          label="Username"
+          value={form.username}
+          onChange={(v) => setForm({ ...form, username: v })}
+          placeholder="admin"
+        />
+        <SecretInput
+          label={cvat?.configured ? "Password (để trống để giữ nguyên)" : "Password *"}
+          value={form.password}
+          onChange={(v) => setForm({ ...form, password: v })}
+          placeholder={cvat?.configured ? "••••••••" : "Mật khẩu CVAT"}
+        />
+        <div className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            id="cvat-verify-ssl"
+            checked={form.verify_ssl}
+            onChange={(e) => setForm({ ...form, verify_ssl: e.target.checked })}
+            className="rounded"
+          />
+          <label htmlFor="cvat-verify-ssl" className="text-xs text-gray-600">
+            Verify SSL certificate
+          </label>
+        </div>
+
+        <div className="flex items-center gap-3 pt-1">
+          <button
+            onClick={handleSave}
+            disabled={updateCVAT.isPending || !form.url || !form.username}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+          >
+            {updateCVAT.isPending ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+            Lưu
+          </button>
+          <button
+            onClick={handleTest}
+            disabled={testCVAT.isPending || !form.url || !form.username}
+            className="flex items-center gap-2 px-4 py-2 border border-gray-200 text-sm text-gray-600 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+          >
+            Test kết nối
+          </button>
+          <ConnectionStatus
+            status={testStatus}
+            message={testCVAT.isSuccess
+              ? `${testCVAT.data?.name?.trim() || testCVAT.data?.username} (@${testCVAT.data?.username})`
+              : testCVAT.error?.message}
+          />
+        </div>
+        {updateCVAT.isSuccess && (
+          <p className="text-xs text-green-600 flex items-center gap-1"><CheckCircle size={11} /> Đã lưu</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ---- Main page ----
 
 export function SettingsPage() {
   const navigate = useNavigate();
-  const [tab, setTab] = useState<"projects" | "minio" | "ssh" | "gdrive" | "cloud" | "redmine">("projects");
+  const [tab, setTab] = useState<"projects" | "minio" | "ssh" | "gdrive" | "cloud" | "redmine" | "cvat">("projects");
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1356,6 +1470,16 @@ export function SettingsPage() {
             </svg>
             Redmine
           </button>
+          <button
+            onClick={() => setTab("cvat")}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${tab === "cvat" ? "bg-violet-600 text-white" : "text-gray-600 hover:bg-gray-50"}`}
+          >
+            <svg className="w-[15px] h-[15px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <path d="M3 9h18M9 21V9" />
+            </svg>
+            CVAT
+          </button>
         </div>
 
         {tab === "projects" && <ProjectsTab />}
@@ -1364,6 +1488,7 @@ export function SettingsPage() {
         {tab === "gdrive" && <GDriveTab />}
         {tab === "cloud" && <CloudStorageTab />}
         {tab === "redmine" && <RedmineTab />}
+        {tab === "cvat" && <CVATTab />}
       </main>
     </div>
   );

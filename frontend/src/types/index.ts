@@ -323,6 +323,7 @@ export interface ManagedProject {
   ssh_dataset_ids: string[];
   rclone_dataset_ids: string[];
   redmine_project_id: string;
+  cvat_links: CVATProjectLink[];
 }
 
 export interface ManagedProjectSummary {
@@ -330,4 +331,65 @@ export interface ManagedProjectSummary {
   open_task_count: number;
   total_task_count: number;
   member_count: number;
+}
+
+export interface CVATProjectLink {
+  cvat_project_id: number;
+  gitlab_config_id: string;
+  dvc_path: string;
+  export_format: string;
+}
+
+// ── CVAT types ─────────────────────────────────────────────────────────────
+
+export interface CVATConfigPublic {
+  url: string;
+  username: string;
+  configured: boolean;
+  verify_ssl: boolean;
+}
+
+export interface CVATConfigUpdate {
+  url?: string;
+  username?: string;
+  password?: string;
+  verify_ssl?: boolean;
+}
+
+export interface CVATProject {
+  id: number;
+  name: string;
+  status?: string;
+  created_date?: string;
+  updated_date?: string;
+}
+
+export interface CVATUserStat {
+  id: number;
+  username: string;
+  display_name: string;
+  jobs_completed: number;
+  frames_completed: number;
+  frames_per_day: number;
+}
+
+export interface CVATTimelineEntry {
+  period: string;
+  users: Record<string, number>;
+}
+
+export interface CVATStatsResponse {
+  project_id: number;
+  from_date: string;
+  to_date: string;
+  group_by: string;
+  total_jobs: number;
+  total_frames: number;
+  completed_jobs: number;
+  completed_frames: number;
+  progress_pct: number;
+  state_counts: Record<string, number>;
+  users: CVATUserStat[];
+  timeline: CVATTimelineEntry[];
+  user_ids_in_period: number[];
 }

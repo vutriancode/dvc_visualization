@@ -22,6 +22,7 @@ class ManagedProjectCreate(BaseModel):
     ssh_dataset_ids: Optional[list[str]] = None
     rclone_dataset_ids: Optional[list[str]] = None
     redmine_project_id: Optional[str] = None
+    cvat_links: Optional[list[dict]] = None
 
 
 class ManagedProjectUpdate(BaseModel):
@@ -36,6 +37,7 @@ class ManagedProjectUpdate(BaseModel):
     ssh_dataset_ids: Optional[list[str]] = None
     rclone_dataset_ids: Optional[list[str]] = None
     redmine_project_id: Optional[str] = None
+    cvat_links: Optional[list[dict]] = None
 
 
 @router.get("")

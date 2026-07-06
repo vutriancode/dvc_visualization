@@ -8,9 +8,10 @@ from .managed_projects import router as managed_projects_router
 from .context import router as context_router
 from .auth import router as auth_router
 from .users import router as users_router
+from .cvat import router as cvat_router
 
 __all__ = [
     "datasets_router", "config_router", "projects_router", "storage_router",
     "rclone_router", "redmine_router", "managed_projects_router", "context_router",
-    "auth_router", "users_router",
+    "auth_router", "users_router", "cvat_router",
 ]

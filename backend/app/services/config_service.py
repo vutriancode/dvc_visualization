@@ -245,6 +245,33 @@ class ConfigService:
             verify_ssl=r.verify_ssl,
         )
 
+    # --- CVAT ---
+
+    def get_cvat(self) -> "CVATConfig":
+        from app.models.config import CVATConfig
+        return self.load().cvat
+
+    def update_cvat(self, data: "CVATConfigUpdate") -> "CVATConfig":
+        from app.models.config import CVATConfig, CVATConfigUpdate
+        cfg = self.load()
+        current = cfg.cvat.model_dump()
+        updates = data.model_dump(exclude_none=True)
+        if "password" in updates and updates["password"] == "":
+            del updates["password"]
+        current.update(updates)
+        cfg.cvat = CVATConfig(**current)
+        self._save(cfg)
+        return cfg.cvat
+
+    def cvat_to_public(self, c: "CVATConfig") -> "CVATConfigPublic":
+        from app.models.config import CVATConfigPublic
+        return CVATConfigPublic(
+            url=c.url,
+            username=c.username,
+            configured=bool(c.url and c.username and c.password),
+            verify_ssl=c.verify_ssl,
+        )
+
     # --- Redmine status mapping ---
 
     def get_redmine_status_mapping(self) -> RedmineStatusMapping:

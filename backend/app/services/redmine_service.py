@@ -31,7 +31,16 @@ class RedmineService:
                 json=data,
                 headers=self._headers(api_key),
             )
-            resp.raise_for_status()
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                try:
+                    errors = resp.json().get("errors")
+                except Exception:
+                    errors = None
+                if errors:
+                    raise RuntimeError("; ".join(errors)) from e
+                raise
             return resp.json() if resp.content else {}
 
     # ── Projects ────────────────────────────────────────────────────────────
@@ -90,6 +99,9 @@ class RedmineService:
         due_date: str | None = None,
         estimated_hours: float | None = None,
         parent_issue_id: int | None = None,
+        category_id: int | None = None,
+        fixed_version_id: int | None = None,
+        custom_fields: list[dict] | None = None,
     ) -> dict:
         issue: dict = {"project_id": project_id, "subject": subject}
         if description:
@@ -108,6 +120,12 @@ class RedmineService:
             issue["estimated_hours"] = estimated_hours
         if parent_issue_id is not None:
             issue["parent_issue_id"] = parent_issue_id
+        if category_id is not None:
+            issue["category_id"] = category_id
+        if fixed_version_id is not None:
+            issue["fixed_version_id"] = fixed_version_id
+        if custom_fields:
+            issue["custom_fields"] = custom_fields
         data = await self._request("issues.json", method="POST", data={"issue": issue})
         return data.get("issue", {})
 
@@ -149,6 +167,15 @@ class RedmineService:
 
     async def delete_issue(self, issue_id: int) -> None:
         await self._request(f"issues/{issue_id}.json", method="DELETE")
+
+    async def create_relation(
+        self, issue_id: int, issue_to_id: int, relation_type: str = "relates",
+    ) -> dict:
+        data = await self._request(
+            f"issues/{issue_id}/relations.json", method="POST",
+            data={"relation": {"issue_to_id": issue_to_id, "relation_type": relation_type}},
+        )
+        return data.get("relation", {})
 
     # ── Metadata ─────────────────────────────────────────────────────────────
 

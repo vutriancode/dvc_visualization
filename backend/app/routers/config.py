@@ -287,3 +287,38 @@ class StatusMappingPayload(BaseModel):
 def save_redmine_status_mapping(payload: StatusMappingPayload):
     result = config_service.save_redmine_status_mapping(payload.mapping)
     return result.mapping
+
+
+# --- CVAT ---
+
+from app.models.config import CVATConfigPublic, CVATConfigUpdate
+from app.services.cvat_service import cvat_service as _cvat_service
+
+
+@router.get("/cvat", response_model=CVATConfigPublic)
+def get_cvat():
+    cfg = config_service.get_cvat()
+    return config_service.cvat_to_public(cfg)
+
+
+@router.put("/cvat", response_model=CVATConfigPublic)
+def update_cvat(payload: CVATConfigUpdate):
+    try:
+        cfg = config_service.update_cvat(payload)
+        return config_service.cvat_to_public(cfg)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class CVATTestRequest(BaseModel):
+    url: str
+    username: str
+    password: str
+
+
+@router.post("/cvat/test")
+async def test_cvat(payload: CVATTestRequest):
+    try:
+        return await _cvat_service.test_connection(payload.url, payload.username, payload.password)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))

@@ -208,31 +208,64 @@ class MinioService:
         client, bucket, path_prefix = self._client_from_dvc_remote(dvc_remote)
         return self._generate_presigned_urls(client, bucket, md5, display_name, total_size, path_prefix)
 
+    def get_dvc_object(self, md5: str) -> bytes | None:
+        """Fetch a DVC object from MinIO. Returns None if not found."""
+        from minio.error import S3Error
+        client, bucket = self._client()
+        try:
+            response = client.get_object(bucket, f"files/md5/{md5[:2]}/{md5[2:]}")
+            data = response.read()
+            response.close()
+            response.release_conn()
+            return data
+        except S3Error as e:
+            if e.code in ("NoSuchKey", "NoSuchObject"):
+                return None
+            raise
+
+    def dvc_object_exists(self, md5: str) -> bool:
+        """Return True if the DVC object for this md5 already exists in MinIO."""
+        from minio.error import S3Error
+        client, bucket = self._client()
+        try:
+            client.stat_object(bucket, f"files/md5/{md5[:2]}/{md5[2:]}")
+            return True
+        except S3Error as e:
+            if e.code in ("NoSuchKey", "NoSuchObject"):
+                return False
+            raise
+
     def upload_dvc_object(self, md5: str, data: bytes) -> str:
-        """Upload raw bytes to MinIO at the DVC 2.x path (files/md5/<aa>/<rest>).
-        Creates the bucket if it does not exist. Returns the object name."""
+        """Upload raw bytes to MinIO at both DVC cache paths.
+
+        DVC on Linux uses files/md5/…; DVC on Windows uses files/md5-dos2unix/…
+        We write both so clients on any platform can pull successfully.
+        Returns the primary object name.
+        """
         import io as _io
         client, bucket = self._client()
         if not client.bucket_exists(bucket):
             client.make_bucket(bucket)
-        object_name = f"files/md5/{md5[:2]}/{md5[2:]}"
-        client.put_object(bucket, object_name, _io.BytesIO(data), length=len(data))
-        return object_name
+        for prefix in ("files/md5", "files/md5-dos2unix"):
+            object_name = f"{prefix}/{md5[:2]}/{md5[2:]}"
+            client.put_object(bucket, object_name, _io.BytesIO(data), length=len(data))
+        return f"files/md5/{md5[:2]}/{md5[2:]}"
 
     def upload_dvc_stream(self, md5: str, stream, size: int) -> str:
-        """Upload a file-like stream to MinIO at the DVC 2.x path.
-        Uses multipart upload when size > 64 MiB so memory usage stays flat.
-        Returns the object name."""
+        """Upload a stream to MinIO using multipart, then mirror to md5-dos2unix path.
+        Uses multipart upload when size > 64 MiB so memory stays flat.
+        Returns the primary object name."""
+        from minio.commonconfig import CopySource
         client, bucket = self._client()
         if not client.bucket_exists(bucket):
             client.make_bucket(bucket)
-        object_name = f"files/md5/{md5[:2]}/{md5[2:]}"
-        part_size = 64 * 1024 * 1024  # 64 MiB parts
-        client.put_object(
-            bucket, object_name, stream, length=size,
-            part_size=part_size,
-        )
-        return object_name
+        primary = f"files/md5/{md5[:2]}/{md5[2:]}"
+        part_size = 64 * 1024 * 1024
+        client.put_object(bucket, primary, stream, length=size, part_size=part_size)
+        # Mirror to md5-dos2unix path for Windows DVC compatibility
+        dos2unix = f"files/md5-dos2unix/{md5[:2]}/{md5[2:]}"
+        client.copy_object(bucket, dos2unix, CopySource(bucket, primary))
+        return primary
 
     def test_connection(self, cfg: MinIOConfig) -> dict:
         try:

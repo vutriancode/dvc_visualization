@@ -364,6 +364,29 @@ export interface HotfixData {
   total: number;
 }
 
+export interface CreateDeployTaskParams {
+  project_id: string;
+  issue_ids: number[];
+}
+
+export interface CreateDeployTaskResult {
+  issue: RedmineIssue;
+  relations_failed: number[];
+}
+
+export function useCreateDeployTask() {
+  const qc = useQueryClient();
+  return useMutation<CreateDeployTaskResult, Error, CreateDeployTaskParams>({
+    mutationFn: (data) =>
+      api("/api/redmine/hotfix/deploy-task", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["redmine-hotfix"] }),
+  });
+}
+
 export function useHotfixIssues(queryUrl: string, qaStatus: string = "QA Verified") {
   const params = new URLSearchParams();
   if (queryUrl) params.set("query_url", queryUrl);

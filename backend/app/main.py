@@ -7,7 +7,7 @@ from app.middleware import AuthMiddleware
 from app.routers import (
     datasets_router, config_router, projects_router, storage_router,
     rclone_router, redmine_router, managed_projects_router, context_router,
-    auth_router, users_router,
+    auth_router, users_router, cvat_router,
 )
 
 app = FastAPI(
@@ -45,6 +45,7 @@ app.include_router(rclone_router)
 app.include_router(redmine_router)
 app.include_router(managed_projects_router)
 app.include_router(context_router)
+app.include_router(cvat_router)
 
 
 @app.on_event("startup")

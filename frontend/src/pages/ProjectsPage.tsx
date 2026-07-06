@@ -12,6 +12,7 @@ import {
 import { useProjects, useSSHDatasets } from "../hooks/useConfig";
 import { useRcloneDatasets } from "../hooks/useRclone";
 import { useRedmineProjects } from "../hooks/useRedmine";
+import { useCVATProjects } from "../hooks/useCVAT";
 import type { ManagedProject } from "../types";
 
 const STATUS_CONFIG = {
@@ -42,6 +43,7 @@ export function ProjectFormModal({
   const { data: sshDatasets = [] } = useSSHDatasets();
   const { data: rcloneDatasets = [] } = useRcloneDatasets();
   const { data: redmineProjects = [] } = useRedmineProjects();
+  const { data: cvatProjects = [] } = useCVATProjects();
 
   const [form, setForm] = useState({
     name: project?.name ?? "",
@@ -56,6 +58,9 @@ export function ProjectFormModal({
   });
   const [sshIds, setSshIds] = useState<string[]>(project?.ssh_dataset_ids ?? []);
   const [rcloneIds, setRcloneIds] = useState<string[]>(project?.rclone_dataset_ids ?? []);
+  const [cvatLinks, setCvatLinks] = useState<{cvat_project_id:number; gitlab_config_id:string; dvc_path:string; export_format:string}[]>(
+    project?.cvat_links ?? []
+  );
 
   const set = (k: string, v: string) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -69,6 +74,7 @@ export function ProjectFormModal({
       tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean),
       ssh_dataset_ids: sshIds,
       rclone_dataset_ids: rcloneIds,
+      cvat_links: cvatLinks,
     };
     if (isEdit) {
       await update.mutateAsync({ id: project.id, data: payload });
@@ -226,6 +232,85 @@ export function ProjectFormModal({
                 ))}
               </select>
             </div>
+
+            {/* CVAT projects */}
+            {cvatProjects.length > 0 && (
+              <div>
+                <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 block flex items-center gap-1.5">
+                  <svg className="w-3 h-3 text-violet-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M9 21V9" />
+                  </svg>
+                  Dự án CVAT
+                </label>
+                <div className="space-y-2 max-h-64 overflow-y-auto border border-gray-200 rounded-lg p-2">
+                  {cvatProjects.map((cp) => {
+                    const link = cvatLinks.find((l) => l.cvat_project_id === cp.id);
+                    const isLinked = !!link;
+                    return (
+                      <div key={cp.id} className={`rounded-lg border p-2 space-y-2 ${isLinked ? "border-violet-200 bg-violet-50/40" : "border-gray-100"}`}>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={isLinked}
+                            onChange={() => {
+                              if (isLinked) {
+                                setCvatLinks((ls) => ls.filter((l) => l.cvat_project_id !== cp.id));
+                              } else {
+                                setCvatLinks((ls) => [...ls, { cvat_project_id: cp.id, gitlab_config_id: "", dvc_path: "annotations", export_format: "CVAT for images 1.1" }]);
+                              }
+                            }}
+                            className="rounded border-gray-300 text-violet-600 w-3 h-3"
+                          />
+                          <span className="text-xs font-medium text-gray-700">{cp.name}</span>
+                          <span className="text-xs text-gray-400 ml-auto">#{cp.id}</span>
+                        </label>
+                        {isLinked && (
+                          <div className="pl-5 space-y-1.5">
+                            <div>
+                              <label className="text-xs text-gray-500 block mb-0.5">GitLab / DVC Project</label>
+                              <select
+                                value={link.gitlab_config_id}
+                                onChange={(e) => setCvatLinks((ls) => ls.map((l) => l.cvat_project_id === cp.id ? { ...l, gitlab_config_id: e.target.value } : l))}
+                                className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:border-violet-400"
+                              >
+                                <option value="">— Chọn GitLab project —</option>
+                                {gitlabConfigs.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                              </select>
+                            </div>
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <div>
+                                <label className="text-xs text-gray-500 block mb-0.5">DVC Path</label>
+                                <input
+                                  type="text"
+                                  value={link.dvc_path}
+                                  onChange={(e) => setCvatLinks((ls) => ls.map((l) => l.cvat_project_id === cp.id ? { ...l, dvc_path: e.target.value } : l))}
+                                  placeholder="annotations"
+                                  className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:border-violet-400"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-xs text-gray-500 block mb-0.5">Format</label>
+                                <select
+                                  value={link.export_format}
+                                  onChange={(e) => setCvatLinks((ls) => ls.map((l) => l.cvat_project_id === cp.id ? { ...l, export_format: e.target.value } : l))}
+                                  className="w-full px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:border-violet-400"
+                                >
+                                  <option value="CVAT for images 1.1">CVAT XML</option>
+                                  <option value="COCO 1.0">COCO JSON</option>
+                                  <option value="Pascal VOC 1.1">Pascal VOC</option>
+                                  <option value="YOLO 1.1">YOLO</option>
+                                  <option value="Datumaro 1.0">Datumaro</option>
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -310,6 +395,12 @@ function ProjectCard({ project, onEdit, onDelete }: {
             <span className="inline-flex items-center gap-1 text-xs bg-red-50 text-red-600 px-2 py-0.5 rounded-full">
               <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="10" /><path fill="white" d="M8 12h8M12 8v8" /></svg>
               Redmine
+            </span>
+          )}
+          {project.cvat_links?.length > 0 && (
+            <span className="inline-flex items-center gap-1 text-xs bg-violet-50 text-violet-600 px-2 py-0.5 rounded-full">
+              <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M9 21V9" /></svg>
+              CVAT ×{project.cvat_links.length}
             </span>
           )}
           {project.tags.map((tag) => (

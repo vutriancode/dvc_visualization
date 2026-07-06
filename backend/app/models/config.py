@@ -167,6 +167,13 @@ class RedmineStatusMapping(BaseModel):
     mapping: dict[str, str] = {}  # {"1": "todo", "2": "in_progress", "3": "done", ...}
 
 
+class CVATProjectLink(BaseModel):
+    cvat_project_id: int
+    gitlab_config_id: str = ""    # which GitLab/DVC repo
+    dvc_path: str = "annotations"  # directory in repo (e.g. "data/annotations")
+    export_format: str = "CVAT for images 1.1"
+
+
 class ManagedProject(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str
@@ -180,6 +187,28 @@ class ManagedProject(BaseModel):
     ssh_dataset_ids: list[str] = []   # SSHDataset.id list
     rclone_dataset_ids: list[str] = [] # RcloneDataset.id list
     redmine_project_id: str = ""      # Redmine project identifier
+    cvat_links: list[CVATProjectLink] = []  # CVAT projects linked to DVC
+
+
+class CVATConfig(BaseModel):
+    url: str = ""
+    username: str = ""
+    password: str = ""
+    verify_ssl: bool = True
+
+
+class CVATConfigPublic(BaseModel):
+    url: str
+    username: str
+    configured: bool
+    verify_ssl: bool
+
+
+class CVATConfigUpdate(BaseModel):
+    url: Optional[str] = None
+    username: Optional[str] = None
+    password: Optional[str] = None
+    verify_ssl: Optional[bool] = None
 
 
 class AppConfig(BaseModel):
@@ -192,4 +221,5 @@ class AppConfig(BaseModel):
     rclone_datasets: list[RcloneDataset] = []
     redmine: RedmineConfig = Field(default_factory=RedmineConfig)
     redmine_status_mapping: RedmineStatusMapping = Field(default_factory=RedmineStatusMapping)
+    cvat: CVATConfig = Field(default_factory=CVATConfig)
     users: list[User] = []

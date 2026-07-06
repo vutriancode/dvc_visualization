@@ -3,9 +3,9 @@ import { useNavigate } from "react-router-dom";
 import {
   ArrowLeft, RefreshCw, ExternalLink, CheckCircle2,
   AlertCircle, Loader2, Link, Clock, Zap, X,
-  ChevronDown, ChevronUp, ShieldCheck,
+  ChevronDown, ChevronUp, ShieldCheck, Rocket,
 } from "lucide-react";
-import { useHotfixIssues } from "../hooks/useRedmine";
+import { useHotfixIssues, useCreateDeployTask } from "../hooks/useRedmine";
 import type { RedmineIssue } from "../types";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -207,8 +207,10 @@ export function HotfixPage() {
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [nextRefreshAt, setNextRefreshAt] = useState<Date | null>(null);
   const [allCollapsed, setAllCollapsed] = useState(false);
+  const [deployResult, setDeployResult] = useState<{ issueId: number; failedCount: number } | null>(null);
 
   const { data, isLoading, error, refetch, isFetching } = useHotfixIssues(activeUrl, activeQaStatus);
+  const createDeployTask = useCreateDeployTask();
 
   const handleLoad = useCallback(() => {
     if (!inputUrl.trim()) return;
@@ -249,6 +251,20 @@ export function HotfixPage() {
   const todayLabel = new Date(todayStr + "T00:00:00").toLocaleDateString("vi-VN", {
     weekday: "long", day: "numeric", month: "long", year: "numeric",
   });
+
+  const handleCreateDeployTask = useCallback(() => {
+    if (qaToday.length === 0) return;
+    const projectId = data?.project_id ?? String(qaToday[0].project.id);
+    setDeployResult(null);
+    createDeployTask.mutate(
+      { project_id: projectId, issue_ids: qaToday.map((i) => i.id) },
+      {
+        onSuccess: (result) => {
+          setDeployResult({ issueId: result.issue.id, failedCount: result.relations_failed.length });
+        },
+      },
+    );
+  }, [qaToday, data?.project_id, createDeployTask]);
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col">
@@ -491,7 +507,51 @@ export function HotfixPage() {
                     {qaToday.length}
                   </span>
                 </div>
+
+                {qaToday.length > 0 && (
+                  <button
+                    onClick={handleCreateDeployTask}
+                    disabled={createDeployTask.isPending}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+                  >
+                    {createDeployTask.isPending ? (
+                      <Loader2 size={12} className="animate-spin" />
+                    ) : (
+                      <Rocket size={12} />
+                    )}
+                    Tạo task deploy stg
+                  </button>
+                )}
               </div>
+
+              {deployResult && (
+                <div className="flex items-center justify-between px-4 py-2.5 bg-blue-50 border-b border-blue-100 text-xs">
+                  <span className="text-blue-700">
+                    Đã tạo task deploy{" "}
+                    {baseUrl ? (
+                      <a href={issueUrl(baseUrl, deployResult.issueId)} target="_blank" rel="noreferrer" className="font-semibold underline hover:text-blue-900">
+                        #{deployResult.issueId}
+                      </a>
+                    ) : (
+                      <span className="font-semibold">#{deployResult.issueId}</span>
+                    )}
+                    {" "}liên kết {qaToday.length} issue
+                    {deployResult.failedCount > 0 && ` (${deployResult.failedCount} liên kết lỗi)`}
+                  </span>
+                  <button onClick={() => setDeployResult(null)} className="p-1 rounded hover:bg-blue-100 text-blue-400">
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
+
+              {createDeployTask.isError && (
+                <div className="flex items-center justify-between px-4 py-2.5 bg-red-50 border-b border-red-100 text-xs">
+                  <span className="text-red-700">Lỗi tạo task deploy: {createDeployTask.error.message}</span>
+                  <button onClick={() => createDeployTask.reset()} className="p-1 rounded hover:bg-red-100 text-red-400">
+                    <X size={12} />
+                  </button>
+                </div>
+              )}
 
               {qaToday.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-8 text-gray-400 gap-2">

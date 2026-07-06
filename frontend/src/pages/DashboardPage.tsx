@@ -436,6 +436,13 @@ export function DashboardPage() {
               Redmine
             </button>
             <button
+              onClick={() => navigate("/cvat")}
+              className="flex items-center gap-2 text-sm text-gray-600 hover:text-violet-600 transition-colors"
+            >
+              <BarChart2 size={15} />
+              CVAT
+            </button>
+            <button
               onClick={() => navigate("/settings")}
               className="flex items-center gap-2 text-sm text-gray-600 hover:text-blue-600 transition-colors"
             >

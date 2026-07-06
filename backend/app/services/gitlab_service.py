@@ -578,6 +578,16 @@ class GitLabService:
                     return None
                 raise
 
+    async def get_default_branch(self, project: GitLabProject) -> str:
+        """Return the default branch of the project (e.g. 'main' or 'master')."""
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                self._api(project, ""),
+                headers=self._headers(project),
+            )
+            resp.raise_for_status()
+            return resp.json().get("default_branch") or "main"
+
     async def commit_files(
         self,
         project: GitLabProject,
@@ -593,7 +603,14 @@ class GitLabService:
                 headers=self._headers(project),
                 json=payload,
             )
-            resp.raise_for_status()
+            if not resp.is_success:
+                try:
+                    detail = resp.json()
+                except Exception:
+                    detail = resp.text
+                raise RuntimeError(
+                    f"GitLab commit trả về {resp.status_code}: {detail}"
+                )
             return resp.json()
 
 

@@ -4,16 +4,21 @@ import {
   ArrowLeft, Loader2, FolderKanban, Database, CheckSquare,
   BarChart2, Info, Edit2, Tag, Link2, Users,
   CheckCircle, LayoutList, Pause, ClipboardList, Flag,
-  Search, Server, Cloud,
+  Search, Server, Cloud, Layers, RefreshCw, Clock, XCircle, ExternalLink,
 } from "lucide-react";
 import { useManagedProject, useManagedProjectSummary } from "../hooks/useManagedProjects";
 import { useRedmineMembers, useRedmineIssues, useRedmineStatusMapping } from "../hooks/useRedmine";
 import { useDatasets } from "../hooks/useDatasets";
 import { useProjects, useSSHDatasets } from "../hooks/useConfig";
 import { useRcloneDatasets } from "../hooks/useRclone";
+import { useCVATProjects, useCVATStats, useSyncCVATtoDVC, useSyncJob, useRetrySyncJob } from "../hooks/useCVAT";
+import type { SyncStep } from "../hooks/useCVAT";
 import { RedmineStats } from "../components/RedmineStats";
 import { ProjectFormModal } from "./ProjectsPage";
-import type { ManagedProject, RedmineIssue } from "../types";
+import type { ManagedProject, RedmineIssue, CVATUserStat, CVATProjectLink } from "../types";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+} from "recharts";
 
 const STATUS_CONFIG = {
   active:    { label: "Đang thực hiện", color: "bg-green-100 text-green-700",  icon: CheckCircle },
@@ -22,13 +27,19 @@ const STATUS_CONFIG = {
   completed: { label: "Hoàn thành",      color: "bg-gray-100 text-gray-600",    icon: CheckCircle },
 } as const;
 
-type Tab = "overview" | "datasets" | "tasks" | "stats";
+type Tab = "overview" | "datasets" | "tasks" | "stats" | "cvat";
 
 const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
   { id: "overview",  label: "Tổng quan",  icon: Info        },
   { id: "datasets",  label: "Datasets",   icon: Database    },
   { id: "tasks",     label: "Tasks",      icon: CheckSquare },
   { id: "stats",     label: "Thống kê",   icon: BarChart2   },
+  { id: "cvat",      label: "CVAT",       icon: Layers      },
+];
+
+const CVAT_COLORS = [
+  "#8b5cf6", "#3b82f6", "#10b981", "#f59e0b", "#ef4444",
+  "#06b6d4", "#f97316", "#84cc16", "#ec4899", "#64748b",
 ];
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -49,9 +60,11 @@ function OverviewTab({ project }: { project: ManagedProject }) {
   const { data: gitlabConfigs = [] } = useProjects();
   const { data: allSsh = [] } = useSSHDatasets();
   const { data: allRclone = [] } = useRcloneDatasets();
+  const { data: allCvat = [] } = useCVATProjects();
   const linkedGitlab = gitlabConfigs.find((g) => g.id === project.gitlab_config_id);
   const linkedSsh = allSsh.filter((d) => project.ssh_dataset_ids.includes(d.id));
   const linkedRclone = allRclone.filter((d) => project.rclone_dataset_ids.includes(d.id));
+  const linkedCvat = allCvat.filter((p) => (project.cvat_links ?? []).some((l) => l.cvat_project_id === p.id));
 
   return (
     <div className="space-y-5">
@@ -156,6 +169,33 @@ function OverviewTab({ project }: { project: ManagedProject }) {
               <p className="text-xs text-gray-400">{project.redmine_project_id || "Chưa liên kết"}</p>
             </div>
           </div>
+          {/* CVAT */}
+          {linkedCvat.length > 0 ? linkedCvat.map((cp) => {
+            const link = project.cvat_links.find((l) => l.cvat_project_id === cp.id)!;
+            const glProject = gitlabConfigs.find((g) => g.id === link.gitlab_config_id);
+            return (
+              <div key={cp.id} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
+                <svg className="w-4 h-4 flex-shrink-0 text-violet-500 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M9 21V9" />
+                </svg>
+                <div>
+                  <p className="text-xs font-medium text-gray-700">{cp.name} <span className="text-gray-400 font-normal">· CVAT #{cp.id}</span></p>
+                  {glProject && <p className="text-xs text-gray-400">→ {glProject.name} / {link.dvc_path}</p>}
+                  <p className="text-xs text-gray-400">{link.export_format}</p>
+                </div>
+              </div>
+            );
+          }) : (project.cvat_links ?? []).length === 0 && (
+            <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
+              <svg className="w-4 h-4 flex-shrink-0 text-gray-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M9 21V9" />
+              </svg>
+              <div>
+                <p className="text-xs font-medium text-gray-700">CVAT</p>
+                <p className="text-xs text-gray-400">Chưa liên kết</p>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -407,6 +447,259 @@ function StatsTab({ redmineProjectId }: { redmineProjectId: string }) {
   );
 }
 
+// ── CVAT tab ─────────────────────────────────────────────────────────────────
+
+function defaultRange() {
+  const now = new Date();
+  const from = new Date(now.getFullYear(), now.getMonth() - 1, 25);
+  const to   = new Date(now.getFullYear(), now.getMonth(), 25);
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  return { from: fmt(from), to: fmt(to) };
+}
+
+function stepIcon(status: SyncStep["status"]) {
+  if (status === "running") return <Loader2 size={12} className="animate-spin text-blue-500 flex-shrink-0" />;
+  if (status === "done")    return <CheckCircle size={12} className="text-green-500 flex-shrink-0" />;
+  if (status === "error")   return <XCircle size={12} className="text-red-500 flex-shrink-0" />;
+  return <Clock size={12} className="text-gray-300 flex-shrink-0" />;
+}
+
+function CvatProjectStats({ projectId, fromDate, toDate, groupBy, link }: {
+  projectId: number; fromDate: string; toDate: string; groupBy: "day" | "week" | "month";
+  link: CVATProjectLink;
+}) {
+  const { data: stats, isLoading, error } = useCVATStats({ project_id: projectId, from_date: fromDate, to_date: toDate, group_by: groupBy });
+  const sync = useSyncCVATtoDVC();
+  const retry = useRetrySyncJob();
+  const canSync = !!link.gitlab_config_id;
+
+  // Persist job_id in localStorage so poll survives page reload
+  const lsKey = `cvat_sync_job_${link.cvat_project_id}`;
+  const [jobId, setJobId] = useState<string | null>(() => localStorage.getItem(lsKey));
+  const { data: syncJob } = useSyncJob(jobId);
+
+  const handleSync = () => {
+    sync.mutate(
+      {
+        cvat_project_id: link.cvat_project_id,
+        gitlab_config_id: link.gitlab_config_id,
+        dvc_path: link.dvc_path,
+        export_format: link.export_format,
+      },
+      {
+        onSuccess: (res) => {
+          localStorage.setItem(lsKey, res.job_id);
+          setJobId(res.job_id);
+        },
+      }
+    );
+  };
+
+  const jobActive = syncJob?.status === "pending" || syncJob?.status === "running";
+  const jobDone   = syncJob?.status === "done";
+  const jobError  = syncJob?.status === "error";
+
+  const chartData = stats ? stats.timeline.map((entry) => {
+    const row: Record<string, string | number> = { period: entry.period };
+    stats.users.forEach((u) => { row[u.display_name || u.username] = entry.users[String(u.id)] ?? 0; });
+    return row;
+  }) : [];
+
+  if (isLoading) return <div className="flex justify-center py-8"><Loader2 size={18} className="animate-spin text-gray-300" /></div>;
+  if (error) return <p className="text-xs text-red-500 px-4 py-3">{(error as Error).message}</p>;
+  if (!stats) return null;
+
+  return (
+    <div className="space-y-4">
+      {/* Progress */}
+      <div className="flex items-center gap-3">
+        <div className="flex-1 bg-gray-100 rounded-full h-2">
+          <div className="bg-violet-500 h-2 rounded-full" style={{ width: `${stats.progress_pct}%` }} />
+        </div>
+        <span className="text-xs font-bold text-violet-600 w-10 text-right">{stats.progress_pct}%</span>
+        <span className="text-xs text-gray-400">{stats.completed_jobs}/{stats.total_jobs} jobs</span>
+      </div>
+
+      {/* Per-user */}
+      {stats.users.length > 0 && (
+        <table className="w-full text-xs">
+          <thead><tr className="text-gray-400 border-b border-gray-100">
+            <th className="pb-1.5 text-left font-medium">Thành viên</th>
+            <th className="pb-1.5 text-right font-medium">Jobs</th>
+            <th className="pb-1.5 text-right font-medium">Frames</th>
+            <th className="pb-1.5 text-right font-medium">Frames/ngày</th>
+          </tr></thead>
+          <tbody>
+            {stats.users
+              .slice()
+              .sort((a: CVATUserStat, b: CVATUserStat) => b.frames_completed - a.frames_completed)
+              .map((u: CVATUserStat, i: number) => (
+                <tr key={u.id} className="border-b border-gray-50">
+                  <td className="py-1.5 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: CVAT_COLORS[i % CVAT_COLORS.length] }} />
+                    <span className="font-medium text-gray-700">{u.display_name || u.username}</span>
+                  </td>
+                  <td className="py-1.5 text-right text-green-600 font-medium">{u.jobs_completed}</td>
+                  <td className="py-1.5 text-right text-gray-600">{u.frames_completed.toLocaleString()}</td>
+                  <td className="py-1.5 text-right text-violet-600 font-medium">{u.frames_per_day}</td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      )}
+
+      {/* Timeline chart */}
+      {chartData.length > 0 && (
+        <ResponsiveContainer width="100%" height={200}>
+          <BarChart data={chartData} margin={{ top: 4, right: 8, left: -20, bottom: 4 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+            <XAxis dataKey="period" tick={{ fontSize: 10 }} />
+            <YAxis tick={{ fontSize: 10 }} />
+            <Tooltip formatter={(v) => typeof v === "number" ? v.toLocaleString() : v} />
+            <Legend iconSize={8} wrapperStyle={{ fontSize: 11 }} />
+            {stats.users.map((u: CVATUserStat, i: number) => (
+              <Bar key={u.id} dataKey={u.display_name || u.username} stackId="a"
+                fill={CVAT_COLORS[i % CVAT_COLORS.length]}
+                radius={i === stats.users.length - 1 ? [3, 3, 0, 0] : undefined} />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      )}
+
+      {stats.users.length === 0 && (
+        <p className="text-xs text-gray-400 text-center py-4">Không có dữ liệu trong kỳ này.</p>
+      )}
+
+      {canSync && (
+        <div className="border-t border-gray-100 pt-3 space-y-2">
+          {/* Sync button + result */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={handleSync}
+              disabled={sync.isPending || jobActive}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-violet-600 text-white rounded-lg hover:bg-violet-700 disabled:opacity-50 transition-colors"
+            >
+              {(sync.isPending || jobActive)
+                ? <Loader2 size={12} className="animate-spin" />
+                : <RefreshCw size={12} />}
+              {sync.isPending ? "Đang khởi tạo..." : jobActive ? "Đang sync..." : "Sync lên DVC"}
+            </button>
+
+            {jobDone && syncJob?.result && (
+              <a href={syncJob.result.commit_url} target="_blank" rel="noopener noreferrer"
+                className="text-xs text-green-600 flex items-center gap-1 hover:underline">
+                <ExternalLink size={11} />
+                <span className="font-mono">{syncJob.result.dvc_file}</span>
+              </a>
+            )}
+            {jobError && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-red-500 flex-1">{syncJob?.error}</span>
+                <button
+                  onClick={() => retry.mutate(jobId!)}
+                  disabled={retry.isPending}
+                  className="flex items-center gap-1 px-2.5 py-1 text-xs bg-orange-500 text-white rounded-lg hover:bg-orange-600 disabled:opacity-50 transition-colors flex-shrink-0"
+                >
+                  {retry.isPending ? <Loader2 size={11} className="animate-spin" /> : <RefreshCw size={11} />}
+                  Thử lại
+                </button>
+              </div>
+            )}
+            {sync.isError && !jobId && (
+              <span className="text-xs text-red-500">{sync.error.message}</span>
+            )}
+          </div>
+
+          {/* Per-step progress */}
+          {syncJob && (
+            <div className="bg-gray-50 rounded-lg px-3 py-2.5 space-y-1.5">
+              {syncJob.steps.map((step: SyncStep) => (
+                <div key={step.name} className="flex items-center gap-2 min-w-0">
+                  {stepIcon(step.status)}
+                  <span className={`text-xs font-medium flex-shrink-0 ${
+                    step.status === "done"    ? "text-green-700"
+                    : step.status === "error"   ? "text-red-600"
+                    : step.status === "running" ? "text-blue-600"
+                    : "text-gray-400"
+                  }`}>{step.label}</span>
+                  {step.message && (
+                    <span className="text-xs text-gray-400 truncate">{step.message}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CvatTab({ cvatLinks }: { cvatLinks: CVATProjectLink[] }) {
+  const { from, to } = defaultRange();
+  const [fromDate, setFromDate] = useState(from);
+  const [toDate, setToDate] = useState(to);
+  const [groupBy, setGroupBy] = useState<"day" | "week" | "month">("day");
+  const { data: allCvat = [] } = useCVATProjects();
+
+  const linkedProjects = allCvat.filter((p) => cvatLinks.some((l) => l.cvat_project_id === p.id));
+
+  if (cvatLinks.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-3">
+        <Layers size={32} className="text-gray-200" />
+        <p className="text-sm text-gray-400">Chưa liên kết dự án CVAT</p>
+        <p className="text-xs text-gray-300">Chỉnh sửa dự án để thêm liên kết CVAT</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* Filter bar */}
+      <div className="bg-white rounded-xl border border-gray-100 p-4 flex flex-wrap gap-3 items-end">
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">Từ ngày</label>
+          <input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)}
+            className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-violet-400" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1">Đến ngày</label>
+          <input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)}
+            className="px-2 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:border-violet-400" />
+        </div>
+        <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+          {(["day", "week", "month"] as const).map((g) => (
+            <button key={g} onClick={() => setGroupBy(g)}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${groupBy === g ? "bg-white text-violet-600 shadow-sm" : "text-gray-500"}`}>
+              {g === "day" ? "Ngày" : g === "week" ? "Tuần" : "Tháng"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Per CVAT project */}
+      {linkedProjects.map((cp) => {
+        const link = cvatLinks.find((l) => l.cvat_project_id === cp.id)!;
+        return (
+          <div key={cp.id} className="bg-white rounded-xl border border-gray-100 overflow-hidden">
+            <div className="px-4 py-2.5 bg-violet-50 border-b border-violet-100 flex items-center gap-2">
+              <svg className="w-3.5 h-3.5 text-violet-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M9 21V9" />
+              </svg>
+              <span className="text-xs font-semibold text-violet-700">{cp.name}</span>
+              <span className="text-xs text-violet-400">#{cp.id}</span>
+            </div>
+            <div className="p-4">
+              <CvatProjectStats projectId={cp.id} fromDate={fromDate} toDate={toDate} groupBy={groupBy} link={link} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export function ProjectDetailPage() {
@@ -459,6 +752,7 @@ export function ProjectDetailPage() {
         {tab === "datasets" && <DatasetsTab project={project} />}
         {tab === "tasks"    && <TasksTab redmineProjectId={project.redmine_project_id} />}
         {tab === "stats"    && <StatsTab redmineProjectId={project.redmine_project_id} />}
+        {tab === "cvat"     && <CvatTab cvatLinks={project.cvat_links ?? []} />}
       </div>
 
       {showEdit && <ProjectFormModal project={project} onClose={() => setShowEdit(false)} />}
